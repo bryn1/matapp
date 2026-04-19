@@ -1,0 +1,18 @@
+version: "3.8"
+
+services:
+  matapp:
+    build: .
+    container_name: matapp
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    volumes:
+      - ~/projects/matapp/data:/app/data
+      - ~/projects/matapp/logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8765/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s

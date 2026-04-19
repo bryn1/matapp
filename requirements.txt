@@ -1,0 +1,7 @@
+flask>=3.0
+requests>=2.31
+beautifulsoup4>=4.12
+bcrypt==4.2.1
+cryptography>=43.0
+lxml>=4.9
+deep-translator>=1.11

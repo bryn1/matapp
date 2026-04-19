@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Logga in — Matapp</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    body { display:flex; align-items:center; justify-content:center; min-height:100vh; background:#f0fdf4; }
+    .auth-box { background:#fff; border-radius:16px; box-shadow:0 4px 24px rgba(0,0,0,.10); padding:36px 32px; width:360px; max-width:96vw; }
+    .auth-box h1 { font-size:1.6rem; margin-bottom:4px; color:#15803d; }
+    .auth-box p  { color:#6b7280; font-size:14px; margin-bottom:20px; }
+    .auth-tabs { display:flex; gap:8px; margin-bottom:20px; }
+    .auth-tab  { flex:1; padding:8px; border:2px solid #d1fae5; border-radius:8px; background:none; color:#15803d; font-weight:700; font-size:14px; cursor:pointer; transition:all .12s; }
+    .auth-tab.active { background:#15803d; color:#fff; border-color:#15803d; }
+    .auth-field { width:100%; padding:10px 12px; border:1.5px solid #d1d5db; border-radius:8px; font-size:15px; margin-bottom:10px; box-sizing:border-box; outline:none; transition:border .12s; }
+    .auth-field:focus { border-color:#15803d; }
+    .auth-submit { width:100%; padding:12px; background:#15803d; color:#fff; border:none; border-radius:8px; font-size:15px; font-weight:700; cursor:pointer; margin-top:4px; transition:background .12s; }
+    .auth-submit:hover { background:#166534; }
+    #auth-error { color:#dc2626; font-size:13px; min-height:18px; margin-top:8px; text-align:center; }
+    .auth-note { font-size:12px; color:#9ca3af; margin-top:14px; text-align:center; }
+    .pw-warning { background:#fef9c3; border:1px solid #fde047; border-radius:8px; padding:10px 12px; font-size:12px; color:#713f12; margin-bottom:14px; display:none; }
+  </style>
+</head>
+<body>
+<div class="auth-box">
+  <h1>🥦 Matapp</h1>
+  <p>Familjemat, recept och inköp</p>
+
+  <div class="auth-tabs">
+    <button class="auth-tab active" id="tab-login" onclick="showTab('login')">Logga in</button>
+    <button class="auth-tab" id="tab-register" onclick="showTab('register')">Skapa konto</button>
+  </div>
+
+  <!-- Login -->
+  <div id="form-login">
+    <input class="auth-field" id="li-user" placeholder="Användarnamn" autocomplete="username"
+           onkeydown="if(event.key==='Enter') doLogin()">
+    <input class="auth-field" id="li-pass" type="password" placeholder="Lösenord"
+           autocomplete="current-password" onkeydown="if(event.key==='Enter') doLogin()">
+    <button class="auth-submit" onclick="doLogin()">Logga in</button>
+  </div>
+
+  <!-- Register -->
+  <div id="form-register" style="display:none">
+    <div class="pw-warning" id="pw-warn">
+      ⚠️ <strong>Viktigt:</strong> Din data krypteras med ditt lösenord.
+      Om du glömmer lösenordet går din data förlorad permanent. Spara det säkert.
+    </div>
+    <input class="auth-field" id="reg-user" placeholder="Välj användarnamn" autocomplete="username">
+    <input class="auth-field" id="reg-pass" type="password" placeholder="Lösenord (minst 6 tecken)"
+           autocomplete="new-password">
+    <input class="auth-field" id="reg-pass2" type="password" placeholder="Bekräfta lösenord"
+           onkeydown="if(event.key==='Enter') doRegister()">
+    <button class="auth-submit" onclick="doRegister()">Skapa konto</button>
+  </div>
+
+  <div id="auth-error"></div>
+  <div class="auth-note">mat.sibbamala.com</div>
+</div>
+
+<script>
+function showTab(tab) {
+  document.getElementById('tab-login').classList.toggle('active', tab==='login');
+  document.getElementById('tab-register').classList.toggle('active', tab==='register');
+  document.getElementById('form-login').style.display = tab==='login' ? '' : 'none';
+  document.getElementById('form-register').style.display = tab==='register' ? '' : 'none';
+  document.getElementById('pw-warn').style.display = tab==='register' ? 'block' : 'none';
+  document.getElementById('auth-error').textContent = '';
+}
+
+async function doLogin() {
+  const username = document.getElementById('li-user').value.trim();
+  const password = document.getElementById('li-pass').value;
+  if (!username || !password) return;
+  try {
+    const r = await fetch('/api/auth/login', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({username, password})
+    });
+    const d = await r.json();
+    if (!r.ok) { document.getElementById('auth-error').textContent = d.error || 'Fel'; return; }
+    window.location.href = '/';
+  } catch(e) { document.getElementById('auth-error').textContent = 'Nätverksfel'; }
+}
+
+async function doRegister() {
+  const username = document.getElementById('reg-user').value.trim();
+  const password = document.getElementById('reg-pass').value;
+  const password2 = document.getElementById('reg-pass2').value;
+  if (!username || !password) { document.getElementById('auth-error').textContent = 'Fyll i alla fält'; return; }
+  if (password !== password2) { document.getElementById('auth-error').textContent = 'Lösenorden stämmer inte'; return; }
+  try {
+    const r = await fetch('/api/auth/register', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({username, password})
+    });
+    const d = await r.json();
+    if (!r.ok) { document.getElementById('auth-error').textContent = d.error || 'Fel'; return; }
+    window.location.href = '/';
+  } catch(e) { document.getElementById('auth-error').textContent = 'Nätverksfel'; }
+}
+</script>
+</body>
+</html>

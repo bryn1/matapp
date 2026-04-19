@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin — Matapp</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    .admin-wrap { max-width:700px; margin:40px auto; padding:0 16px; }
+    .admin-wrap h1 { color:#15803d; }
+    table { width:100%; border-collapse:collapse; margin-top:20px; }
+    th, td { padding:10px 12px; text-align:left; border-bottom:1px solid #e5e7eb; font-size:14px; }
+    th { background:#f0fdf4; font-weight:700; color:#15803d; }
+    .del-btn { background:#fee2e2; color:#dc2626; border:none; border-radius:6px; padding:4px 12px; cursor:pointer; font-weight:700; }
+    .del-btn:hover { background:#fca5a5; }
+    .back-link { color:#15803d; text-decoration:none; font-weight:700; }
+    .note { background:#fef9c3; border:1px solid #fde047; border-radius:8px; padding:10px 14px; font-size:13px; color:#713f12; margin-bottom:20px; }
+  </style>
+</head>
+<body>
+<div class="admin-wrap">
+  <h1>⚙️ Admin — Matapp</h1>
+  <a href="/" class="back-link">← Tillbaka</a>
+
+  <p class="note" style="margin-top:16px">
+    🔒 Admin kan INTE läsa andra användares data. All data är krypterad med resp. användares lösenord.
+    Radering tar bort all data permanent.
+  </p>
+
+  <h2>Användare ({{ users|length }})</h2>
+  <table>
+    <tr><th>ID</th><th>Användarnamn</th><th>Admin</th><th>Registrerad</th><th>Åtgärd</th></tr>
+    {% for u in users %}
+    <tr>
+      <td>{{ u.id }}</td>
+      <td>{{ u.username }}</td>
+      <td>{{ '✓' if u.is_admin else '—' }}</td>
+      <td>{{ u.created_at[:10] }}</td>
+      <td>
+        {% if u.username != username %}
+        <button class="del-btn" onclick="delUser({{ u.id }}, '{{ u.username }}')">Radera</button>
+        {% else %}—{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+<script>
+async function delUser(id, name) {
+  if (!confirm('Radera ' + name + '? All krypterad data raderas permanent.')) return;
+  const r = await fetch('/api/admin/users/' + id, {method:'DELETE'});
+  if (r.ok) location.reload();
+  else alert('Misslyckades');
+}
+</script>
+</body>
+</html>

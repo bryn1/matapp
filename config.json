@@ -1,0 +1,111 @@
+{
+  "willys_store": "Karlskrona Slottsbacken",
+  "household": {
+    "adults": 2,
+    "kids": [
+      3,
+      6
+    ]
+  },
+  "language": "sv",
+  "diet": [
+    "vegetarian",
+    "chicken",
+    "fish"
+  ],
+  "ollama_model": "mistral:7b-instruct-q4_K_M",
+  "ollama_url": "http://192.168.5.29:4001",
+  "min_catalog_rating": 3.5,
+  "catalog_min_matches": 10,
+  "max_recipe_minutes": 30,
+  "serve_port": 8765,
+  "db_path": "data/matapp.db",
+  "pantry_items": [
+    "mjöl",
+    "socker",
+    "salt",
+    "peppar",
+    "vatten",
+    "honung",
+    "kakao",
+    "pasta",
+    "ris",
+    "spaghetti",
+    "makaroner",
+    "olivolja",
+    "rapsolja",
+    "olja",
+    "buljong",
+    "fond",
+    "tomatpuré",
+    "tomatsås",
+    "bakpulver",
+    "jäst",
+    "vanilj",
+    "vinäger",
+    "soja",
+    "ketchup",
+    "senap",
+    "majonnäs",
+    "ströbröd",
+    "havregryn"
+  ],
+  "staples": [
+    {
+      "item": "Toalettpapper",
+      "interval_days": 30
+    },
+    {
+      "item": "Hushållspapper",
+      "interval_days": 30
+    },
+    {
+      "item": "Havregryn",
+      "interval_days": 14
+    },
+    {
+      "item": "Pasta",
+      "interval_days": 21
+    },
+    {
+      "item": "Ris",
+      "interval_days": 30
+    },
+    {
+      "item": "Olivolja",
+      "interval_days": 60
+    },
+    {
+      "item": "Ketchup",
+      "interval_days": 60
+    },
+    {
+      "item": "Tvål",
+      "interval_days": 30
+    },
+    {
+      "item": "Diskmedel",
+      "interval_days": 30
+    },
+    {
+      "item": "Bakpulver",
+      "interval_days": 90
+    },
+    {
+      "item": "Salt",
+      "interval_days": 90
+    },
+    {
+      "item": "Mjöl",
+      "interval_days": 30
+    }
+  ],
+  "order_agent": {
+    "chain": "willys",
+    "store_id": "",
+    "ntfy_url": "http://localhost:8090",
+    "ntfy_topic": "",
+    "preferred_slot_weekday": 6,
+    "preferred_slot_hour": 11
+  }
+}
