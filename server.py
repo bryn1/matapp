@@ -620,6 +620,17 @@ def api_plan_next_week():
         _save(sess, "weekly_plan", plan_data)
 
         items = _flatten_and_save_shopping(sess, shopping_items, week_num, year)
+
+        # Bump times_used + last_used for the catalog rows we picked, so the
+        # rotation penalty in get_catalog_candidates kicks in next time.
+        try:
+            picked = {r.get("name", "").lower() for r in recipes}
+            for cand in catalog_candidates:
+                if cand.get("name", "").lower() in picked and cand.get("url"):
+                    db.mark_catalog_used(cand["url"])
+        except Exception:
+            logger.exception("mark_catalog_used failed (non-fatal)")
+
         return jsonify(ok=True, recipe_count=len(recipes))
     except Exception as e:
         logger.exception("next-week plan failed")
@@ -679,6 +690,17 @@ def api_plan_swap_recipe():
         # Rebuild shopping list
         shopping_items = build_shopping_list(recipes, offers, global_cfg.get("pantry_items", []), chain=cfg.get("store_chain"), store_id=cfg.get("chain_store_id"))
         _flatten_and_save_shopping(sess, shopping_items, week_num, year)
+
+        # Mark the swapped-in recipe as used.
+        try:
+            swapped_name = (new_recipes[0].get("name") or "").lower()
+            for cand in catalog_candidates:
+                if cand.get("name", "").lower() == swapped_name and cand.get("url"):
+                    db.mark_catalog_used(cand["url"])
+                    break
+        except Exception:
+            logger.exception("mark_catalog_used failed (non-fatal)")
+
         return jsonify(ok=True, new_recipe=new_recipes[0].get("name"))
     except Exception as e:
         logger.exception("swap-recipe failed")
@@ -769,6 +791,15 @@ def api_plan_generate():
 
         # Save shopping list
         items = _flatten_and_save_shopping(sess, shopping_items, week_num, year)
+
+        # Bump times_used + last_used for the catalog rows we picked.
+        try:
+            picked = {r.get("name", "").lower() for r in recipes}
+            for cand in catalog_candidates:
+                if cand.get("name", "").lower() in picked and cand.get("url"):
+                    db.mark_catalog_used(cand["url"])
+        except Exception:
+            logger.exception("mark_catalog_used failed (non-fatal)")
 
         return jsonify(ok=True, recipe_count=len(recipes), item_count=len(items))
     except Exception as e:
