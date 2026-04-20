@@ -1,7 +1,7 @@
 # Matapp — Architecture
 
 > Read this before any matapp work.
-> Last updated: 2026-04-06
+> Last updated: 2026-04-20
 
 ---
 
@@ -134,3 +134,58 @@ tail -f ~/ai-sandbox/matapp/logs/run.log
 | Price watchlist never acted on | LOW | `price_watchlist` table exists but no alert fires when watched item goes on sale |
 | Catalog refresh overwrites ratings | LOW | Monthly scrape updates `recipe_catalog` — verify it doesn't clear user-submitted ratings |
 | Willys API (Tjek/Squid) unofficial | HIGH | Could change or add auth at any time. Add fallback (hardcoded weekly staples list) |
+
+---
+
+## Recipe rotation (fixed 2026-04-20 — GT-24i)
+
+`get_catalog_candidates` in `db.py` previously scored candidates by
+`match_count*10 + rating - times_used*0.5` with deterministic sort — same
+inputs produced the same ordering every week. Effective behavior: only
+44/3858 catalog recipes ever used; same top 3 repeated 2+ weeks running.
+
+**Fix (commit 5248d30 on `matapp-phase1-fixes`):**
+
+- Parse `last_used` (ISO date) → recency_penalty (linear decay over 60 days)
+- Add `random.uniform(0, 0.5)` jitter for tie-breaking
+- New formula: `match_count*10 + rating - times_used*0.5 - recency_penalty*3.0 + jitter`
+
+**Behavior:** recipes used within the last 60 days are demoted; the penalty
+strength (max -3.0) exceeds the rating range (~1.5) but stays below the
+match_count weight (10/term) so offer-match still dominates. Jitter
+reshuffles same-scored recipes across back-to-back calls.
+
+**5-week simulation** (isolated DB copy, `exclude_names` tracks last 2 weeks,
+`mark_catalog_used` after commit): weeks 1-3 produce fully disjoint sets;
+week 4 may reuse week-1 picks once their recency_penalty has decayed; week 5
+diverges again. Acceptable for user intent ("dont repeat every week,
+
+---
+
+## Recipe rotation (fixed 2026-04-20 — GT-24i)
+
+`get_catalog_candidates` in `db.py` previously scored candidates by
+`match_count*10 + rating - times_used*0.5` with deterministic sort — same
+inputs produced the same ordering every week. Effective behavior: only
+44/3858 catalog recipes ever used; same top 3 repeated 2+ weeks running.
+
+**Fix (commit 5248d30 on `matapp-phase1-fixes`):**
+
+- Parse `last_used` (ISO date) → recency_penalty (linear decay over 60 days)
+- Add `random.uniform(0, 0.5)` jitter for tie-breaking
+- New formula: `match_count*10 + rating - times_used*0.5 - recency_penalty*3.0 + jitter`
+
+**Behavior:** recipes used within the last 60 days are demoted; the penalty
+strength (max -3.0) exceeds the rating range (~1.5) but stays below the
+match_count weight (10/term) so offer-match still dominates. Jitter
+reshuffles same-scored recipes across back-to-back calls.
+
+**5-week simulation** (isolated DB copy, `exclude_names` tracks last 2 weeks,
+`mark_catalog_used` after commit): weeks 1-3 produce fully disjoint sets;
+week 4 may reuse week-1 picks once their recency_penalty has decayed; week 5
+diverges again. Acceptable for user intent ("don't repeat every week;
+coming back after several weeks is OK").
+
+**Not yet exhaustive:** jitter scale may need tuning if users still see stuck
+winners. Next refinement (if needed): boost jitter to 1.0, or add weak jitter
+inside `select_recipes._take` too.
