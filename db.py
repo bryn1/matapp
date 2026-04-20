@@ -822,20 +822,34 @@ def get_catalog_candidates(offer_terms: list[str], exclude_names: list[str],
         return []
 
     # Build SQL with optional diet AND time filters
-    sql = "SELECT * FROM recipe_catalog WHERE (site_rating >= 3.5 OR site_rating IS NULL)"
+    base_sql = "SELECT * FROM recipe_catalog WHERE (site_rating >= 3.5 OR site_rating IS NULL)"
     params: list = []
 
     if allowed_diets is not None:
         placeholders = ",".join("?" * len(allowed_diets))
-        sql += f" AND LOWER(diet_type) IN ({placeholders})"
+        base_sql += f" AND LOWER(diet_type) IN ({placeholders})"
         params.extend([d.lower() for d in allowed_diets])
 
     if max_time_min is not None:
-        sql += " AND (total_time_min IS NULL OR total_time_min <= ?)"
+        base_sql += " AND (total_time_min IS NULL OR total_time_min <= ?)"
         params.append(max_time_min)
 
+    # Hard 6-week no-repeat: a recipe picked within the last 42 days is NOT
+    # eligible, period. If the filtered pool is too small to fill a plan we
+    # fall back to the full pool and log a warning — but only after trying
+    # with the hard filter first.
+    NO_REPEAT_DAYS = 42
+    strict_sql = base_sql + f" AND (last_used IS NULL OR last_used <= date('now', '-{NO_REPEAT_DAYS} days'))"
+
     with get_connection(db_path) as conn:
-        rows = conn.execute(sql, tuple(params)).fetchall()
+        rows = conn.execute(strict_sql, tuple(params)).fetchall()
+        if len(rows) < 20:
+            logger.warning(
+                "Catalog pool after %sd no-repeat filter had only %d rows; "
+                "relaxing to full pool (expect some repeats this week)",
+                NO_REPEAT_DAYS, len(rows),
+            )
+            rows = conn.execute(base_sql, tuple(params)).fetchall()
 
     offer_terms_lower = [t.lower() for t in offer_terms]
     exclude_lower = {n.lower() for n in exclude_names}
