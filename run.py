@@ -152,6 +152,7 @@ def main() -> int:
             offers=offers,
             week_num=week_num,
             disliked_names=disliked_names,
+            allowed_diets=config.get("diet"),
         )
     except Exception as e:
         logger.error(f"Fel vid receptgenerering: {e}")

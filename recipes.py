@@ -386,6 +386,7 @@ def select_recipes(
     settings: Optional[dict] = None,
     exclude_names: Optional[list[str]] = None,
     count: Optional[int] = None,
+    allowed_diets: Optional[list[str]] = None,
 ) -> list[dict]:
     """
     Picks 5 recipes directly from catalog_candidates without calling Ollama.
@@ -395,14 +396,21 @@ def select_recipes(
       - exactly 1 fish recipe, never salmon
       - remainder vegetarian (2 or 3)
 
+    Chicken and fish counts now respect the provided allowed_diets.
+
     Types assigned by cook time: fastest non-fish → weekday (×2),
     next → family (×2), fish → fredagsmys.
     """
     n_recipes = count or (settings or {}).get("recipes_per_week", 5)
-    fish_count = min(1, n_recipes)
-    chicken_count = CHICKEN_PATTERN[(week_num - 1) % len(CHICKEN_PATTERN)]
+    ad = {d.lower() for d in (allowed_diets or [])}
+    unrestricted = not allowed_diets  # None or empty = no restriction
+    has_chicken  = unrestricted or 'chicken' in ad or 'meat' in ad
+    has_fish     = unrestricted or 'fisk' in ad or 'fish' in ad
+    fish_count    = 1 if has_fish else 0
+    fish_count    = min(fish_count, n_recipes)
+    chicken_count = CHICKEN_PATTERN[(week_num - 1) % len(CHICKEN_PATTERN)] if has_chicken else 0
     chicken_count = min(chicken_count, n_recipes - fish_count)
-    veg_count = n_recipes - chicken_count - fish_count
+    veg_count     = n_recipes - chicken_count - fish_count
     logger.info(f"Vecka {week_num}: {chicken_count} kyckling, {fish_count} fisk (ej lax), {veg_count} vegetariskt")
 
     offer_terms: set[str] = set()
@@ -444,11 +452,8 @@ def select_recipes(
     def _take(pool: list[dict], n: int, is_fish: bool = False) -> int:
         nonlocal committed_ingredients
         taken = 0
-        # Re-sort pool each pick: original score (index) + overlap bonus
-        # Using pool order as proxy for base score (already sorted by _score descending)
         remaining_pool = [c for c in pool if (c.get("url") or c["name"]) not in used]
         while taken < n and remaining_pool:
-            # Score = overlap bonus * 2 - position_penalty (preserve base ranking when tied)
             best = max(
                 range(len(remaining_pool)),
                 key=lambda i: _overlap_score(remaining_pool[i]) * 2 - i * 0.1
@@ -462,7 +467,7 @@ def select_recipes(
 
     # Chicken
     got = _take(chicken_pool, chicken_count)
-    if got < chicken_count:
+    if got < chicken_count and chicken_count > 0:
         logger.warning(f"Bara {got}/{chicken_count} kycklingrecept tillgängliga, fyller från vegetariskt")
         _take(veg_pool, chicken_count - got)
 
@@ -474,7 +479,6 @@ def select_recipes(
     remaining = n_recipes - len(picked_rows)
     got = _take(veg_pool, remaining)
     if got < remaining:
-        # fallback: any leftover candidates
         _take([c for c in candidates if (c.get("url") or c["name"]) not in used], remaining - got)
 
     if len(picked_rows) < n_recipes and count is None:
@@ -483,7 +487,6 @@ def select_recipes(
             "Kör scrape.py för att fylla katalogen."
         )
 
-    # Assign types: sort non-fish by cook time, fastest 2 → weekday, next → family
     non_fish = [(row, False) for row, is_fish in picked_rows if not is_fish]
     fish     = [(row, True)  for row, is_fish in picked_rows if is_fish]
     non_fish.sort(key=lambda x: x[0].get("total_time_min") or 45)
@@ -503,7 +506,6 @@ def select_recipes(
         logger.info(f"  • {r['name']} ({r['type']}, {r.get('prep_time','?')}+{r.get('cook_time','?')} min){flag}")
 
     return result[:n_recipes]
-
 
 def format_recipe_text(recipe: dict) -> str:
     lines = []

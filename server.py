@@ -610,7 +610,7 @@ def api_plan_next_week():
             return jsonify(error="Receptkatalogen är tom"), 500
 
         global_cfg = _load_config()
-        recipes = select_recipes(catalog_candidates, offers, settings=cfg)
+        recipes = select_recipes(catalog_candidates, offers, settings=cfg, allowed_diets=cfg.get("diet"))
 
         if not recipes:
             return jsonify(error="Inga recept hittades"), 500
@@ -667,7 +667,8 @@ def api_plan_swap_recipe():
             offer_terms=offer_terms, exclude_names=existing_names, limit=50,
         )
         new_recipes = select_recipes(catalog_candidates, offers, settings=cfg,
-                                     exclude_names=existing_names, count=1)
+                                     exclude_names=existing_names, count=1,
+                                     allowed_diets=cfg.get("diet"))
         if not new_recipes:
             return jsonify(error="Kunde inte hitta nytt recept"), 500
 
@@ -754,7 +755,8 @@ def api_plan_generate():
 
         global_cfg = _load_config()
         recipes = select_recipes(catalog_candidates, offers,
-                                  week_num=week_num, settings=cfg)
+                                  week_num=week_num, settings=cfg,
+                                  allowed_diets=cfg.get("diet"))
 
         if not recipes:
             return jsonify(error="Inga recept hittades"), 500

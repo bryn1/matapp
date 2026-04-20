@@ -650,21 +650,41 @@ def get_catalog_candidates(offer_terms: list[str], exclude_names: list[str],
       - site rating (secondary)
       - recency penalty (de-prioritise recently used)
 
+    Diet filter (Phase 1 1c):
+      allowed_diets=None  → no diet filter (legacy behavior)
+      allowed_diets=[]    → returns [] immediately (no diet allowed)
+      allowed_diets=[...] → SQL hard AND: LOWER(diet_type) IN (...); rows with
+                            NULL diet_type are excluded. force_diets merges
+                            into allowed_diets with a deprecation warning.
+
     Returns top `limit` results by score.
-    If allowed_diets is set and does not include 'meat', meat recipes are filtered out.
     """
-    force_diets_lower = {d.lower() for d in (force_diets or [])}
+    # Merge deprecated force_diets into allowed_diets
+    if force_diets:
+        logger.warning("get_catalog_candidates: force_diets is deprecated; merging into allowed_diets")
+        if allowed_diets is None:
+            allowed_diets = []
+        allowed_diets = sorted({d.lower() for d in allowed_diets} | {d.lower() for d in force_diets})
+
+    # Empty-list diet filter ⇒ nothing is allowed
+    if allowed_diets is not None and len(allowed_diets) == 0:
+        return []
+
+    # Build SQL with optional diet AND time filters
+    sql = "SELECT * FROM recipe_catalog WHERE (site_rating >= 3.5 OR site_rating IS NULL)"
+    params: list = []
+
+    if allowed_diets is not None:
+        placeholders = ",".join("?" * len(allowed_diets))
+        sql += f" AND LOWER(diet_type) IN ({placeholders})"
+        params.extend([d.lower() for d in allowed_diets])
+
+    if max_time_min is not None:
+        sql += " AND (total_time_min IS NULL OR total_time_min <= ?)"
+        params.append(max_time_min)
 
     with get_connection(db_path) as conn:
-        rows = conn.execute("""
-            SELECT * FROM recipe_catalog
-            WHERE (site_rating >= 3.5 OR site_rating IS NULL)
-              AND (
-                diet_type IN ({})
-                OR (? IS NULL OR total_time_min IS NULL OR total_time_min <= ?)
-              )
-        """.format(",".join("?" * len(force_diets_lower)) if force_diets_lower else "'__none__'"),
-            (*force_diets_lower, max_time_min, max_time_min)).fetchall()
+        rows = conn.execute(sql, tuple(params)).fetchall()
 
     offer_terms_lower = [t.lower() for t in offer_terms]
     exclude_lower = {n.lower() for n in exclude_names}
@@ -672,12 +692,13 @@ def get_catalog_candidates(offer_terms: list[str], exclude_names: list[str],
     # Skip category pages / guide pages (no real ingredients)
     rows = [r for r in rows if r["ingredients"] and r["ingredients"] not in ('[]', '""', '')]
 
-    # Filter meat if diet config excludes it
-    if allowed_diets is not None and "meat" not in [d.lower() for d in allowed_diets]:
+    # Belt-and-braces meat filter: SQL excludes rows with diet_type='meat' already,
+    # but old rows may have NULL diet_type and still contain meat in ingredients.
+    # When diet restricts to veg/fish only, drop anything with meat keywords.
+    if allowed_diets is not None and "meat" not in allowed_diets:
         rows = [r for r in rows if not _has_meat(r)]
 
     scored = []
-
     for row in rows:
         if row["name"].lower() in exclude_lower:
             continue
@@ -687,21 +708,13 @@ def get_catalog_candidates(offer_terms: list[str], exclude_names: list[str],
         name_lower = row["name"].lower()
         combined = ingredients_text + " " + ki_text + " " + name_lower
 
-        # Count how many distinct offer terms match
         match_count = sum(1 for t in offer_terms_lower if t in combined)
-        # force_diets recipes are always included even with zero offer matches
-        # Use ingredient-based detection (diet_type column may be NULL for old rows)
-        if force_diets_lower:
-            effective_diet = (row["diet_type"] or classify_diet_type(row)).lower()
-            is_forced = effective_diet in force_diets_lower
-        else:
-            is_forced = False
-        if offer_terms_lower and match_count == 0 and not is_forced:
+        # No more force_diets bypass — diet_type is enforced in SQL
+        if offer_terms_lower and match_count == 0:
             continue
 
         rating_score = float(row["site_rating"] or 3.5)
         times_used = int(row["times_used"] or 0)
-        # Score: offer matches dominate, tie-break by rating, penalise heavy re-use
         score = match_count * 10 + rating_score - times_used * 0.5
 
         r = dict(row)
@@ -709,7 +722,6 @@ def get_catalog_candidates(offer_terms: list[str], exclude_names: list[str],
         r["_score"] = score
         scored.append(r)
 
-    # Sort by score descending, take top `limit`
     scored.sort(key=lambda x: x["_score"], reverse=True)
     top = scored[:limit]
 
@@ -722,7 +734,6 @@ def get_catalog_candidates(offer_terms: list[str], exclude_names: list[str],
         results.append(r)
 
     return results
-
 
 def mark_catalog_used(url: str, db_path: Path = DEFAULT_DB) -> None:
     """Bump times_used and set last_used to today for a catalog recipe."""
