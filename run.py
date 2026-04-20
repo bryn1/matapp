@@ -160,10 +160,44 @@ def main() -> int:
 
     # ── Bygg inköpslista ───────────────────────────────────────────────────────
     try:
-        from shopping import build_shopping_list
+        from shopping import build_shopping_list, _guess_category
         shopping_list = build_shopping_list(recipes, offers, pantry_items=config.get("pantry_items", []))
         total_items = sum(len(cat["items"]) for cat in shopping_list)
         logger.info(f"Inköpslista byggd: {total_items} varor")
+
+        # Append habitual items (learned + staples) — non-fatal on failure
+        try:
+            habitual = db.get_due_habitual_items(db_path=db_path)
+            existing = {it["item"].strip().lower() for cat in shopping_list for it in cat["items"]}
+            n_added = n_staples = n_habit = 0
+            for h in habitual:
+                if h["item"].strip().lower() in existing:
+                    continue
+                category = _guess_category(h["item"])
+                entry = {
+                    "item": h["item"],
+                    "quantity": "",
+                    "on_sale": False,
+                    "in_pantry": False,
+                    "source": h["source"],
+                }
+                bucket = next((c for c in shopping_list if c["category"] == category), None)
+                if bucket is None:
+                    shopping_list.append({"category": category, "items": [entry]})
+                else:
+                    bucket["items"].append(entry)
+                n_added += 1
+                if h["source"] == "staples":
+                    n_staples += 1
+                else:
+                    n_habit += 1
+            logger.info(
+                f"Lagt till {n_added} vanevaror "
+                f"({n_staples} fasta, {n_habit} inlärda)"
+            )
+        except Exception as e:
+            logger.warning(f"Kunde inte lägga till vanevaror: {e}")
+
     except Exception as e:
         logger.error(f"Fel vid byggande av inköpslista: {e}")
         return 1
