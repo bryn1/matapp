@@ -262,7 +262,16 @@ def build_shopping_list(recipes: list[dict], offers: list[dict], pantry_items: l
     # Samla alla ingredienser med normaliserat namn som nyckel
     # Värde: {"quantity": str, "on_sale": bool, "original_name": str}
     aggregated: dict[str, dict] = {}
-    pantry_lower = [p.lower() for p in pantry_items]
+    try:
+        import db as _db
+        pantry_lower = [p["item"].lower() for p in _db.pantry_list(in_stock=True)]
+    except Exception:
+        pantry_lower = [p.lower() for p in pantry_items]
+    # Whole-word regex patterns — kills 'mjöl' matching 'mjölk' substring bug.
+    pantry_patterns = [
+        re.compile(rf'\b{re.escape(p)}\b')
+        for p in pantry_lower if len(p) >= 4
+    ]
 
     for recipe in recipes:
         recipe_name = recipe.get("name", "Okänt recept")
@@ -287,7 +296,7 @@ def build_shopping_list(recipes: list[dict], offers: list[dict], pantry_items: l
                 if on_sale_flag:
                     existing["on_sale"] = True
             else:
-                in_pantry = any(p in norm_key for p in pantry_lower)
+                in_pantry = any(pat.search(norm_key) for pat in pantry_patterns)
                 # Fish recipe ingredients go to "hemma" — buy at fish counter, not Willys
                 category = "hemma" if is_fish_recipe else _guess_category(item)
                 aggregated[norm_key] = {
