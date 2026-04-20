@@ -52,14 +52,20 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
 }
 
 
+_CATEGORY_KW_SORTED = sorted(
+    [(keyword, category) for category, keywords in CATEGORY_KEYWORDS.items() for keyword in keywords],
+    key=lambda x: len(x[0]),
+    reverse=True
+)
+
 def _guess_category(item_name: str) -> str:
     """
     Gissar kategori för en ingrediens baserat på namn.
     Returnerar 'övrigt' om inget nyckelord matchar.
     """
     name_lower = item_name.lower()
-    for category, keywords in CATEGORY_KEYWORDS.items():
-        if any(kw in name_lower for kw in keywords):
+    for keyword, category in _CATEGORY_KW_SORTED:
+        if keyword in name_lower:
             return category
     return "övrigt"
 
