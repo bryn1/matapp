@@ -161,6 +161,14 @@ week 4 may reuse week-1 picks once their recency_penalty has decayed; week 5
 diverges again. Acceptable for user intent ("don't repeat every week;
 coming back after several weeks is OK").
 
+**2026-04-20 PM follow-up (commit f9d863d):** the recency penalty depended on
+\`db.mark_catalog_used()\` being called, but only \`run.py\` did so — never the web
+endpoints. Result: web-generated plans never set \`last_used\`, so the penalty
+stayed 0 and the same recipes stayed on top. Fixed in
+\`/api/plan/next-week\`, \`/api/plan/swap-recipe\`, \`/api/plan/generate\` (server.py)
+— each now marks the catalog rows it actually picked. Self-corrects within
+1-2 generations.
+
 **Not yet exhaustive:** jitter scale may need tuning if users still see stuck
 winners. Next refinement (if needed): boost jitter to 1.0, or add weak jitter
 inside `select_recipes._take` too.
