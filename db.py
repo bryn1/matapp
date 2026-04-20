@@ -12,6 +12,7 @@ Tables:
 
 import json
 import logging
+import random
 import sqlite3
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -865,7 +866,28 @@ def get_catalog_candidates(offer_terms: list[str], exclude_names: list[str],
 
         rating_score = float(row["site_rating"] or 3.5)
         times_used = int(row["times_used"] or 0)
-        score = match_count * 10 + rating_score - times_used * 0.5
+
+        # Recency penalty: recently-used recipes rank lower. Never-used = 0
+        # penalty. Decays linearly to 0 after 60 days so old picks become
+        # eligible again.
+        last_used_raw = row["last_used"]
+        recency_penalty = 0.0
+        if last_used_raw:
+            try:
+                days_ago = (date.today() - date.fromisoformat(last_used_raw)).days
+                recency_penalty = max(0.0, 1.0 - days_ago / 60.0)
+            except (ValueError, TypeError):
+                pass
+
+        # Small random jitter breaks deterministic ties so same-scored
+        # recipes rotate across back-to-back plan generations.
+        jitter = random.uniform(0.0, 0.5)
+
+        score = (match_count * 10
+                 + rating_score
+                 - times_used * 0.5
+                 - recency_penalty * 3.0
+                 + jitter)
 
         r = dict(row)
         r["_match_count"] = match_count
