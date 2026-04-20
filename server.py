@@ -24,6 +24,7 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
 import auth
 import db
+import shopping
 
 BASE_DIR = Path(__file__).parent
 
@@ -949,25 +950,34 @@ def api_shopping_toggle():
 @login_required
 def api_shopping_add():
     sess = current_session()
-    data     = request.get_json() or {}
-    item     = (data.get("item") or "").strip()
+    data = request.get_json() or {}
+    item = (data.get("item") or "").strip()
     quantity = (data.get("quantity") or "").strip()
     if not item:
         return jsonify(error="item required"), 400
 
     week_num, year = _current_week()
-    shop   = _load(sess, "shopping")
+    shop = _load(sess, "shopping")
     new_id = shop.get("_next_id", 1)
+    normalized_item = shopping._normalize_item_name(item)
+    category = shopping._guess_category(item)
+
+    for existing in shop.get("items", []):
+        if shopping._normalize_item_name(existing['item']) == normalized_item:
+            existing['quantity'] = shopping._combine_quantities(existing['quantity'], quantity)
+            existing['category'] = category
+            return jsonify(ok=True, id=existing['id'], category=category, quantity=existing['quantity'], merged=True)
+
     shop.setdefault("items", []).append({
         "id": new_id, "item": item, "quantity": quantity,
-        "category": "övrigt", "on_sale": False, "checked": False,
+        "category": category, "on_sale": False, "checked": False,
         "in_pantry": False, "added_manually": True,
     })
     shop["_next_id"] = new_id + 1
     shop["week_num"] = week_num
-    shop["year"]     = year
+    shop["year"] = year
     _save(sess, "shopping", shop)
-    return jsonify(ok=True, id=new_id)
+    return jsonify(ok=True, id=new_id, category=category, quantity=quantity, merged=False)
 
 
 @app.route("/api/shopping/remove", methods=["POST"])
