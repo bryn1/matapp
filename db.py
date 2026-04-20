@@ -1841,3 +1841,97 @@ def pantry_ensure_seeded(config_items: list[str],
     if count == 0:
         n = pantry_seed_from_list(config_items, db_path)
         logger.info("Seeded pantry with %d items.", n)
+
+
+def get_due_habitual_items(today: date | None = None,
+                            min_times_bought: int = 3,
+                            warn_days_ahead: int = 3,
+                            db_path: Path = DEFAULT_DB) -> list[dict]:
+    """Return items due or near-due to buy, merged from shopping_memory (learned
+    habits) and staples (fixed intervals). Sorted most-overdue-first.
+
+    - Learned items require `times_bought >= min_times_bought` and a non-null
+      avg_interval_days; skipped until the pattern is stable.
+    - Staples with no last_bought are treated as immediately due.
+    - If the same item name appears in both sources, the staples entry wins
+      (fixed interval is authoritative).
+    """
+    if today is None:
+        today = date.today()
+
+    habit_items: list[dict] = []
+    staple_items: list[dict] = []
+
+    with get_connection(db_path) as conn:
+        # Learned habits
+        rows = conn.execute(
+            "SELECT item, last_bought, times_bought, avg_interval_days "
+            "FROM shopping_memory "
+            "WHERE times_bought >= ? "
+            "  AND avg_interval_days IS NOT NULL "
+            "  AND last_bought IS NOT NULL",
+            (min_times_bought,),
+        ).fetchall()
+        for row in rows:
+            try:
+                last = date.fromisoformat(row["last_bought"])
+            except (ValueError, TypeError):
+                logger.warning("Bad last_bought for %s: %r",
+                               row["item"], row["last_bought"])
+                continue
+            due = last + timedelta(days=int(round(row["avg_interval_days"])))
+            due_in = (due - today).days
+            if due_in > warn_days_ahead:
+                continue
+            habit_items.append({
+                "item": row["item"],
+                "source": "habit",
+                "last_bought": row["last_bought"],
+                "interval_days": int(round(row["avg_interval_days"])),
+                "times_bought": row["times_bought"],
+                "due_in_days": due_in,
+                "confidence": min(row["times_bought"] / 6.0, 1.0),
+            })
+
+        # Fixed-interval staples
+        staple_rows = conn.execute(
+            "SELECT item, interval_days, last_bought FROM staples"
+        ).fetchall()
+        for row in staple_rows:
+            if row["last_bought"]:
+                try:
+                    last = date.fromisoformat(row["last_bought"])
+                    due = last + timedelta(days=row["interval_days"])
+                    due_in = (due - today).days
+                except (ValueError, TypeError):
+                    logger.warning("Bad last_bought for staple %s: %r",
+                                   row["item"], row["last_bought"])
+                    continue
+            else:
+                due_in = 0
+            staple_items.append({
+                "item": row["item"],
+                "source": "staples",
+                "last_bought": row["last_bought"],
+                "interval_days": row["interval_days"],
+                "times_bought": None,
+                "due_in_days": due_in,
+                "confidence": 1.0,
+            })
+
+    # Dedupe: staples win on name collision
+    seen: set[str] = set()
+    merged: list[dict] = []
+    for it in staple_items:
+        key = (it["item"] or "").lower().strip()
+        if key and key not in seen:
+            merged.append(it)
+            seen.add(key)
+    for it in habit_items:
+        key = (it["item"] or "").lower().strip()
+        if key and key not in seen:
+            merged.append(it)
+            seen.add(key)
+
+    merged.sort(key=lambda r: r["due_in_days"])
+    return merged
