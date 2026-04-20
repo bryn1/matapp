@@ -1118,6 +1118,52 @@ def api_staples_suggestions():
     sess = current_session()
     return jsonify(_build_staple_suggestions(sess))
 
+@app.route("/api/pantry", methods=["GET"])
+@login_required
+def api_pantry_list():
+    """Return all pantry items (shared across household)."""
+    items = db.pantry_list()
+    return jsonify(items=items)
+
+
+@app.route("/api/pantry/toggle", methods=["POST"])
+@login_required
+def api_pantry_toggle():
+    """Set in_stock to 0 or 1 for `item`. Creates row if absent."""
+    data = request.get_json(silent=True) or {}
+    item = (data.get("item") or "").strip()
+    if not item:
+        return jsonify(error="item required"), 400
+    in_stock = bool(data.get("in_stock", False))
+    db.pantry_toggle(item, in_stock)
+    return jsonify(ok=True, item=item, in_stock=in_stock)
+
+
+@app.route("/api/pantry/use", methods=["POST"])
+@login_required
+def api_pantry_use():
+    """Mark `item` as consumed (in_stock=0). No-op if absent."""
+    data = request.get_json(silent=True) or {}
+    item = (data.get("item") or "").strip()
+    if not item:
+        return jsonify(error="item required"), 400
+    db.pantry_use(item)
+    return jsonify(ok=True, item=item, in_stock=False)
+
+
+@app.route("/api/pantry/restock", methods=["POST"])
+@login_required
+def api_pantry_restock():
+    """Set in_stock=1 for `item`. Optional quantity/unit update."""
+    data = request.get_json(silent=True) or {}
+    item = (data.get("item") or "").strip()
+    if not item:
+        return jsonify(error="item required"), 400
+    quantity = data.get("quantity")
+    unit = data.get("unit")
+    db.pantry_restock(item, quantity, unit)
+    return jsonify(ok=True, item=item, in_stock=True)
+
 
 # ─── Admin panel ──────────────────────────────────────────────────────────────
 
