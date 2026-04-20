@@ -53,14 +53,21 @@ def _is_blocked(name: str) -> bool:
 
 
 def _offer(name: str, price=None, original_price=None, promo_label="",
-           chain="") -> dict:
+           chain="", is_real_sale: bool = False) -> dict:
     return {
         "name": name,
         "price": price,
         "original_price": original_price,
         "promo_label": promo_label,
         "dealer_id": chain,
+        "is_real_sale": is_real_sale,
     }
+
+
+_AXFOOD_SALE_LABEL_RE = re.compile(r"\b(rea|extrapris|sänkt pris|prissänkt|kampanj|\d+\s*för\s*\d+)\b")
+_AXFOOD_NON_SALE_LABEL_RE = re.compile(r"\b(medlemspris|klubberbjudande|member[- ]?price)\b")
+
+
 
 
 # ── Axfood (Willys, Hemköp, Tempo, Handlar'n) ────────────────────────────────
@@ -135,7 +142,17 @@ def _axfood_fetch_campaigns(store_id: str, chain: str) -> list[dict]:
                 p = promos[0]
                 label = (p.get("conditionLabel") or p.get("rewardLabel") or
                          p.get("textLabelGenerated") or "").strip()
-            offers.append(_offer(name, price_val, orig, label, chain))
+
+            label_lower = label.lower()
+            is_real_sale = False
+            if _AXFOOD_NON_SALE_LABEL_RE.search(label_lower):
+                is_real_sale = False
+            elif price_val is not None and orig is not None and price_val < orig:
+                is_real_sale = True
+            elif _AXFOOD_SALE_LABEL_RE.search(label_lower):
+                is_real_sale = True
+
+            offers.append(_offer(name, price_val, orig, label, chain, is_real_sale=is_real_sale))
 
         total_pages = data.get("pagination", {}).get("numberOfPages", 1)
         page += 1

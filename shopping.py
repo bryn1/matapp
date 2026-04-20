@@ -164,15 +164,19 @@ def _combine_quantities(q1: str, q2: str) -> str:
 
 def _is_on_sale(item_name: str, offers: list[dict]) -> bool:
     """
-    Kontrollerar om en ingrediens matchar något erbjudande.
-    Använder case-insensitiv delmatchning (fuzzy).
+    Whole-word match between ingredient tokens (>=4 chars) and sale offers.
+    Only returns True if the offer has is_real_sale=True.
     """
-    name_lower = item_name.lower()
+    tokens = re.findall(r"[a-zåäö]{4,}", item_name.lower())
+    if not tokens:
+        return False
     for offer in offers:
-        offer_name = offer.get("name", "").lower()
-        # Matchar om ingrediensen innehåller erbjudandets namn eller vice versa
-        if offer_name and (offer_name in name_lower or name_lower in offer_name):
-            return True
+        if not offer.get("is_real_sale"):
+            continue
+        offer_name_lower = offer.get("name", "").lower()
+        for token in tokens:
+            if re.search(r'\b' + re.escape(token) + r'\b', offer_name_lower):
+                return True
     return False
 
 
