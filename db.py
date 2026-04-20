@@ -183,7 +183,15 @@ def init_db(db_path: Path = DEFAULT_DB) -> None:
                 quantity_4p TEXT NOT NULL,
                 unit TEXT NOT NULL DEFAULT ''
             );
-        """)
+        
+            CREATE TABLE IF NOT EXISTS pantry (
+                item          TEXT PRIMARY KEY COLLATE NOCASE,
+                quantity      TEXT,
+                unit          TEXT,
+                in_stock      INTEGER NOT NULL DEFAULT 1,
+                last_updated  TEXT NOT NULL DEFAULT (date('now'))
+            );
+""")
         _migrate(conn)
     logger.info(f"Database initialized at {db_path}")
 
@@ -1707,3 +1715,107 @@ def store_price_catalog_stats(chain: str, store_id: str,
             WHERE chain=? AND store_id=?
         """, (chain, store_id)).fetchone()
     return dict(row) if row else {}
+
+
+PANTRY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS pantry (
+    item          TEXT PRIMARY KEY COLLATE NOCASE,
+    quantity      TEXT,
+    unit          TEXT,
+    in_stock      INTEGER NOT NULL DEFAULT 1,
+    last_updated  TEXT NOT NULL DEFAULT (date('now'))
+);
+"""
+
+
+def pantry_seed_from_list(items: list[str], db_path: Path = DEFAULT_DB) -> int:
+    """INSERT OR IGNORE each item into pantry with in_stock=1. Return rows inserted."""
+    inserted = 0
+    with get_connection(db_path) as conn:
+        for item in items:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO pantry (item, in_stock) VALUES (?, 1)",
+                (item,),
+            )
+            inserted += cur.rowcount
+    return inserted
+
+
+def pantry_list(in_stock: bool | None = None,
+                db_path: Path = DEFAULT_DB) -> list[dict]:
+    """List pantry rows. `in_stock`: True → only in_stock=1, False → only =0, None → all."""
+    with get_connection(db_path) as conn:
+        if in_stock is True:
+            rows = conn.execute(
+                "SELECT item, quantity, unit, in_stock, last_updated "
+                "FROM pantry WHERE in_stock = 1 ORDER BY item"
+            ).fetchall()
+        elif in_stock is False:
+            rows = conn.execute(
+                "SELECT item, quantity, unit, in_stock, last_updated "
+                "FROM pantry WHERE in_stock = 0 ORDER BY item"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT item, quantity, unit, in_stock, last_updated "
+                "FROM pantry ORDER BY item"
+            ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def pantry_toggle(item: str, in_stock: bool,
+                  db_path: Path = DEFAULT_DB) -> None:
+    """Upsert in_stock for `item`. Preserves quantity/unit if row exists."""
+    with get_connection(db_path) as conn:
+        conn.execute(
+            "INSERT INTO pantry (item, in_stock, last_updated) "
+            "VALUES (?, ?, date('now')) "
+            "ON CONFLICT(item) DO UPDATE SET "
+            "in_stock=excluded.in_stock, last_updated=excluded.last_updated",
+            (item, 1 if in_stock else 0),
+        )
+
+
+def pantry_use(item: str, db_path: Path = DEFAULT_DB) -> None:
+    """Set in_stock=0 for `item`. No-op if not present."""
+    with get_connection(db_path) as conn:
+        conn.execute(
+            "UPDATE pantry SET in_stock = 0, last_updated = date('now') "
+            "WHERE item = ?",
+            (item,),
+        )
+
+
+def pantry_restock(item: str, quantity: str | None = None,
+                   unit: str | None = None,
+                   db_path: Path = DEFAULT_DB) -> None:
+    """Set in_stock=1 for `item`. If quantity/unit provided, update those too."""
+    with get_connection(db_path) as conn:
+        if quantity is None and unit is None:
+            conn.execute(
+                "INSERT INTO pantry (item, in_stock, last_updated) "
+                "VALUES (?, 1, date('now')) "
+                "ON CONFLICT(item) DO UPDATE SET "
+                "in_stock=1, last_updated=date('now')",
+                (item,),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO pantry (item, quantity, unit, in_stock, last_updated) "
+                "VALUES (?, ?, ?, 1, date('now')) "
+                "ON CONFLICT(item) DO UPDATE SET "
+                "quantity=COALESCE(excluded.quantity, pantry.quantity), "
+                "unit=COALESCE(excluded.unit, pantry.unit), "
+                "in_stock=1, last_updated=date('now')",
+                (item, quantity, unit),
+            )
+
+
+def pantry_ensure_seeded(config_items: list[str],
+                         db_path: Path = DEFAULT_DB) -> None:
+    """If pantry is empty, seed from config_items list."""
+    with get_connection(db_path) as conn:
+        count = conn.execute("SELECT COUNT(*) FROM pantry").fetchone()[0]
+    if count == 0:
+        n = pantry_seed_from_list(config_items, db_path)
+        logger.info("Seeded pantry with %d items.", n)
