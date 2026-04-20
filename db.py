@@ -293,6 +293,135 @@ def _seed_standard_amounts(conn: sqlite3.Connection) -> None:
     )
 
 
+
+INGREDIENT_CANONICAL_SCHEMA = """
+CREATE TABLE IF NOT EXISTS ingredient_canonical (
+    variant TEXT PRIMARY KEY COLLATE NOCASE,
+    canonical TEXT NOT NULL
+)
+"""
+
+
+_INGREDIENT_CANONICAL_SEED = [
+    # Milk variants
+    ("lättmjölk", "mjölk"),
+    ("mellanmjölk", "mjölk"),
+    ("standardmjölk", "mjölk"),
+    ("laktosfri mjölk", "mjölk"),
+    ("havremjölk", "mjölk"),
+    ("sojamjölk", "mjölk"),
+    # Feta
+    ("feta", "fetaost"),
+    ("fetaost i tärningar", "fetaost"),
+    ("grekisk fetaost", "fetaost"),
+    # Onion
+    ("rödlök", "lök"),
+    ("gul lök", "lök"),
+    ("salladslök", "lök"),
+    ("vitlöksklyfta", "vitlök"),
+    # Tomato
+    ("körsbärstomater", "tomat"),
+    ("kvisttomater", "tomat"),
+    ("cocktailtomat", "tomat"),
+    ("tomat på burk", "krossade tomater"),
+    # Cream/fraiche
+    ("smetana", "creme fraiche"),
+    ("gräddfil", "creme fraiche"),
+    ("havrefraiche", "creme fraiche"),
+    ("matlagningsgrädde", "grädde"),
+    ("vispgrädde", "grädde"),
+    ("kaffegrädde", "grädde"),
+    ("havregrädde", "grädde"),
+    ("sojagrädde", "grädde"),
+    # Cheese variants
+    ("parmesan", "parmesanost"),
+    ("philadelphia", "färskost"),
+    ("cream cheese", "färskost"),
+    # Butter substitutes
+    ("bregott", "smör"),
+    ("lätta", "smör"),
+    # Cucumber
+    ("slanggurka", "gurka"),
+    ("minigurka", "gurka"),
+    # Eggs
+    ("små ägg", "ägg"),
+    ("stora ägg", "ägg"),
+    ("medelstora ägg", "ägg"),
+]
+
+
+def _seed_ingredient_canonical(conn: sqlite3.Connection) -> None:
+    """Seeds ingredient_canonical with common Swedish grocery variant → canonical mappings."""
+    for variant, canonical in _INGREDIENT_CANONICAL_SEED:
+        conn.execute(
+            "INSERT OR IGNORE INTO ingredient_canonical (variant, canonical) VALUES (?, ?)",
+            (variant, canonical),
+        )
+
+
+_PACK_GRAMS_SEED = [
+    ("fetaost", 200),
+    ("halloumi", 250),
+    ("smör", 250),
+    ("mjöl", 500),
+    ("pasta", 500),
+    ("krossade tomater", 400),
+    ("krossade tomat", 400),
+    ("tomatpuré", 70),
+    ("jäst", 50),
+    ("bacon", 140),
+    ("rökt skinka", 150),
+    ("salami", 80),
+    ("parmesanost", 80),
+    ("färskost", 200),
+    ("kokosmjölk", 400),
+]
+
+
+def _seed_pack_grams(conn: sqlite3.Connection) -> None:
+    """Seeds pack_grams in ingredient_standard_amounts for common pack sizes."""
+    for ingredient, pack_grams in _PACK_GRAMS_SEED:
+        conn.execute(
+            "UPDATE ingredient_standard_amounts SET pack_grams = ? WHERE ingredient = ? AND pack_grams IS NULL",
+            (pack_grams, ingredient),
+        )
+
+
+def get_canonical_name(item: str, db_path: Path = DEFAULT_DB) -> str | None:
+    """Return the canonical name for `item` if a mapping exists, else None."""
+    if not item:
+        return None
+    key = item.lower().strip()
+    with get_connection(db_path) as conn:
+        row = conn.execute(
+            "SELECT canonical FROM ingredient_canonical WHERE variant = ?",
+            (key,),
+        ).fetchone()
+    return row["canonical"] if row else None
+
+
+def resolve_pack_to_grams(item: str, count: float = 1.0,
+                          db_path: Path = DEFAULT_DB) -> int | None:
+    """
+    Resolve an ingredient + pack count to grams.
+    Looks up canonical name first, then reads pack_grams from
+    ingredient_standard_amounts. Returns None if no mapping or no pack size.
+    """
+    if not item:
+        return None
+    canonical = get_canonical_name(item, db_path) or item.lower().strip()
+    with get_connection(db_path) as conn:
+        row = conn.execute(
+            "SELECT pack_grams FROM ingredient_standard_amounts "
+            "WHERE ingredient = ? AND pack_grams IS NOT NULL",
+            (canonical,),
+        ).fetchone()
+    if not row:
+        return None
+    return int(count * row["pack_grams"])
+
+
+
 def lookup_standard_amount(ingredient_name: str, servings: int = 4,
                            db_path: Path = DEFAULT_DB) -> str:
     """Return standard quantity string for ingredient scaled to servings.
@@ -397,6 +526,19 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if conn.execute("SELECT COUNT(*) FROM ingredient_standard_amounts").fetchone()[0] == 0:
         _seed_standard_amounts(conn)
         logger.info("Seeded ingredient_standard_amounts with defaults")
+
+    # Phase 1 1b — canonical ingredient variants + pack_grams column
+    conn.execute(INGREDIENT_CANONICAL_SCHEMA)
+    if conn.execute("SELECT COUNT(*) FROM ingredient_canonical").fetchone()[0] == 0:
+        _seed_ingredient_canonical(conn)
+        logger.info("Seeded ingredient_canonical with variant mappings")
+
+    isa_cols = {row[1] for row in conn.execute("PRAGMA table_info(ingredient_standard_amounts)")}
+    if "pack_grams" not in isa_cols:
+        conn.execute("ALTER TABLE ingredient_standard_amounts ADD COLUMN pack_grams INTEGER")
+        logger.info("Migration: added pack_grams column to ingredient_standard_amounts")
+        _seed_pack_grams(conn)
+        logger.info("Seeded pack_grams for common ingredients")
 
 
 # ─── Recipe History ───────────────────────────────────────────────────────────

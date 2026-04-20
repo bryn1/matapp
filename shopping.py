@@ -97,20 +97,55 @@ def _normalize_item_name(name: str) -> str:
 
 
 def _merge_similar(aggregated: dict, combine_quantities_fn) -> dict:
-    """Fuzzy-merge ingredient keys with similarity >= 0.82."""
-    keys = list(aggregated.keys())
-    skip = set()
-    merged = {}
-    for i, k1 in enumerate(keys):
+    """
+    Collapse near-duplicate ingredient keys.
+
+    Two-pass strategy:
+    1) Canonical pre-pass — consult `db.get_canonical_name`. If two keys map to
+       the same canonical name, merge them regardless of string similarity.
+    2) Fuzzy fallback — SequenceMatcher at threshold 0.75 for remaining keys.
+    """
+    import db as _db
+
+    canonical_for: dict[str, str] = {}
+    for k in list(aggregated.keys()):
+        canon = _db.get_canonical_name(k) or k
+        canonical_for[k] = canon
+
+    groups: dict[str, list[str]] = {}
+    for k, canon in canonical_for.items():
+        groups.setdefault(canon, []).append(k)
+
+    keys_absorbed: set[str] = set()
+    for canon, keys in groups.items():
+        if len(keys) < 2:
+            continue
+        primary = keys[0]
+        for other in keys[1:]:
+            aggregated[primary]["quantity"] = combine_quantities_fn(
+                aggregated[primary]["quantity"],
+                aggregated[other]["quantity"],
+                aggregated[primary].get("item"),
+            )
+            if aggregated[other].get("on_sale"):
+                aggregated[primary]["on_sale"] = True
+            keys_absorbed.add(other)
+
+    remaining_keys = [k for k in aggregated.keys() if k not in keys_absorbed]
+    skip: set[str] = set()
+    merged: dict = {}
+    for i, k1 in enumerate(remaining_keys):
         if k1 in skip:
             continue
-        for k2 in keys[i + 1:]:
+        for k2 in remaining_keys[i + 1:]:
             if k2 in skip:
                 continue
             ratio = SequenceMatcher(None, k1, k2).ratio()
-            if ratio >= 0.82:
+            if ratio >= 0.75:
                 aggregated[k1]["quantity"] = combine_quantities_fn(
-                    aggregated[k1]["quantity"], aggregated[k2]["quantity"]
+                    aggregated[k1]["quantity"],
+                    aggregated[k2]["quantity"],
+                    aggregated[k1].get("item"),
                 )
                 if aggregated[k2].get("on_sale"):
                     aggregated[k1]["on_sale"] = True
@@ -140,27 +175,49 @@ def _parse_quantity(quantity_str: str) -> tuple[float, str]:
     return (0.0, quantity_str)
 
 
-def _combine_quantities(q1: str, q2: str) -> str:
+_PACK_UNITS = {"förp", "förpackning", "paket", "pkt", "pkg", "st", "stk", "burk"}
+
+
+def _combine_quantities(q1: str, q2: str, item_name: str | None = None) -> str:
     """
     Kombinerar två kvantitetssträngar om de har samma enhet.
     T.ex. "400 g" + "200 g" = "600 g".
-    Om enheterna skiljer sig listas de med "+".
+
+    Om enheterna skiljer sig åt försöker vi konvertera pack-enheter
+    (förp/paket/st) till gram via `db.resolve_pack_to_grams(item_name, count)`
+    när item_name är känt.
+
+    Faller tillbaka på " + " om konvertering inte är möjlig.
     """
     amount1, unit1 = _parse_quantity(q1)
     amount2, unit2 = _parse_quantity(q2)
+    u1 = unit1.lower() if unit1 else ""
+    u2 = unit2.lower() if unit2 else ""
 
-    if unit1 and unit2 and unit1.lower() == unit2.lower() and amount1 > 0 and amount2 > 0:
+    if u1 and u2 and u1 == u2 and amount1 > 0 and amount2 > 0:
         combined = amount1 + amount2
-        # Formatera snyggt: heltal om möjligt
         if combined == int(combined):
             return f"{int(combined)} {unit1}"
-        else:
-            return f"{combined:.1f} {unit1}"
+        return f"{combined:.1f} {unit1}"
 
-    # Olika enheter eller unparsable — lista separat
+    if item_name and amount1 > 0 and amount2 > 0:
+        import db as _db
+        def _to_grams(amount: float, unit: str) -> int | None:
+            if unit == "g":
+                return int(amount)
+            if unit == "kg":
+                return int(amount * 1000)
+            if unit in _PACK_UNITS:
+                return _db.resolve_pack_to_grams(item_name, amount)
+            return None
+        g1 = _to_grams(amount1, u1)
+        g2 = _to_grams(amount2, u2)
+        if g1 is not None and g2 is not None:
+            total = g1 + g2
+            return f"{total} g"
+
     parts = [p for p in [q1, q2] if p]
     return " + ".join(parts)
-
 
 def _is_on_sale(item_name: str, offers: list[dict]) -> bool:
     """
