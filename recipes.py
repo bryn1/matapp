@@ -425,7 +425,7 @@ def select_recipes(
 
     chicken_pool = [c for c in candidates if _is_chicken(c)]
     fish_pool    = [c for c in candidates if _is_fish(c) and not _is_chicken(c) and not _is_lax(c)]
-    veg_pool     = [c for c in candidates if not _is_chicken(c) and not _is_fish(c)]
+    veg_pool     = [c for c in candidates if (c.get("diet_type") or "").lower() == "vegetarian"]
 
     picked_rows: list[tuple[dict, bool]] = []  # (row, is_fish)
     used: set[str] = set()
