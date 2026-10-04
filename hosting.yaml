@@ -1,6 +1,6 @@
 {
   "_comment": [
-    "vm106 hosting config for bryn1/kvallsmat (copied from svarkor-ai/Matapp, MC 3796 P3).",
+    "vm106 hosting config for bryn1/matapp - repo consolidated from bryn1/kvallsmat per owner ruling 2026-10-03 (one repo, bryn1/matapp); the old Flask app is kept on the legacy/flask branch.",
     "STRICT JSON (no yaml lib). Schema owner: infra/vm106/repo-visibility-hosting/reconcile.py (do not fork).",
     "Service app: exec=server.py binds $HOST:$PORT (PORT must equal apps.yaml port 8141).",
     "mirror.exclude EXTENDS the service defaults (mirror.py:180-183): without it the first mirror",
