@@ -1,7 +1,7 @@
 # 1188.1 — matapp audit: inventory + goal-diff (GATE report)
 
 **Card:** 1188.1 (parent 1188) · **Type:** research · **Agent:** kjell · **Date:** 2026-09-12 UTC
-**Repo:** svarkor-ai/hosting, apps/matapp/ · clone: /srv/workspace/hosting (HEAD = 12e2e30, clean)
+**Repo:** bryn1/hosting, apps/matapp/ · clone: /srv/workspace/hosting (HEAD = 12e2e30, clean)
 **Evidence file:** /srv/workspace/hosting/kjell/1188.1-inventory-diff-evidence-20260912.md
 **Report copy:** /srv/workspace/svarkor-matapp/audit/inventory-diff.md (per DoD)
 

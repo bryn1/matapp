@@ -19,7 +19,7 @@ State:     $STATE_DIRECTORY = /var/lib/vm106-app-matapp (systemd StateDirectory)
   sqlalchemy 2.0.52, pydantic 2.13.4) verified against the assembled stack.
 
 ## Deploy
-1. Commit apps/matapp + the apps.yaml entry, push to github.com/svarkor-ai/hosting
+1. Commit apps/matapp + the apps.yaml entry, push to github.com/bryn1/hosting
    (origin). vm106's pull timer (<=5 min) applies it.
 2. Port 8141 is a service port in range 8100-8199, unused by any other app here.
 

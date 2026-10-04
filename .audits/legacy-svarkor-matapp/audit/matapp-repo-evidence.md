@@ -12,15 +12,15 @@ Svarkor tog över: fixade testbuggen, byggde repo-trädet, pushade, verifierade.
 `database.make_engine()` skapar nu sqlite-filens föräldrakatalog (`os.makedirs(parent, exist_ok=True)`) för file-URL:er (inte :memory:).
 
 ## Verifiering (körda kommandon, denna session)
-1. `git ls-remote git@github.com:svarkor-ai/Matapp.git` →
+1. `git ls-remote git@github.com:bryn1/Matapp.git` →
    `43d1ecac70cdd801dc42905fdebfa18cd27b860f  refs/heads/main` (exit 0)
-2. Färsk klon av svarkor-ai/Matapp till /tmp + `pytest tests/` → **9 passed** (exit 0)
+2. Färsk klon av bryn1/Matapp till /tmp + `pytest tests/` → **9 passed** (exit 0)
 3. `git ls-tree -r --name-only HEAD` → 54 filer; junk-check: ingen `__pycache__`, ingen `.data/`, ingen `.pytest_cache`, ingen `--help/` i GIT-TRÄDET (.data/ skapas av testkörning, täckt av .gitignore)
 4. README.md i repo-rot, svensk text (kvällsmats-planerare, kör-lokalt, tester, statussektion)
 5. Källträd (hosting:matapp-fixround) efter fix: 9 passed — ingen regression
 
 ## Artefakter
-- GitHub: https://github.com/svarkor-ai/Matapp (main = 43d1eca)
+- GitHub: https://github.com/bryn1/Matapp (main = 43d1eca)
 - Fix-commit i hosting: 0a2c5d2 (pushad till origin/matapp-fixround)
 - Byggdir: /tmp/matapp-repo-build/Matapp
 

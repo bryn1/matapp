@@ -1,6 +1,6 @@
 # [type:research] audit: inventory + goal-diff (matapp)
 
-Du är GATE. Adversarial inventory + jämförelse för matapp (svarkor-ai/hosting, apps/matapp/).
+Du är GATE. Adversarial inventory + jämförelse för matapp (bryn1/hosting, apps/matapp/).
 
 ## Uppgift
 1. FULL INVENTORY av apps/matapp/ vid HEAD (12e2e30, POC) och vid commit 4d220cd (framtidsversion):

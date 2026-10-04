@@ -4,7 +4,7 @@ Owner-ratified (verbatim): "driftsättning till live, kontrollera vad som är li
 och se till att senaste versionen hostas".
 
 Source: `/srv/workspace/matapp` @32c7963 (branch main). Mirror: `/srv/workspace/hosting/apps/matapp`
-(repo `svarkor-ai/hosting`). Executed by the `infra` profile, 2026-09-26.
+(repo `bryn1/hosting`). Executed by the `infra` profile, 2026-09-26.
 
 ## 1. Pre-publish diff verdict (mirror doctrine)
 

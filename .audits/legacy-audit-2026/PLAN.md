@@ -6,8 +6,8 @@ store. Owner ratified via question: **real offers where feasible** (not mock-onl
 
 ## Confirmed state (VERIFIED this session)
 
-- Source repo `github.com/svarkor-ai/Matapp` @43d1eca is a SINGLE commit; the deployed
-  hosting copy `/srv/workspace/hosting/apps/matapp` (in repo `svarkor-ai/hosting`) has
+- Source repo `github.com/bryn1/Matapp` @43d1eca is a SINGLE commit; the deployed
+  hosting copy `/srv/workspace/hosting/apps/matapp` (in repo `bryn1/hosting`) has
   DIVERGED both ways:
   - hosting-only: `app/config.py` (KVALLSMATS_GROCERS seam + PLANNER), `app/models/store_selection.py`,
     `app/routers/stores.py`, `--help` junk file, `.data/`

@@ -1,4 +1,4 @@
-# LEDGER — Matapp (github.com/svarkor-ai/Matapp)
+# LEDGER — Matapp (github.com/bryn1/Matapp)
 
 Grocery menu planner: ingests weekly offers from Swedish grocers, plans menus from
 recipes against those offers. FastAPI app (`app/`) + ingest motor (`src/`).

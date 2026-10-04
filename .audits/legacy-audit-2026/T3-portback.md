@@ -1,7 +1,7 @@
 # T3 — port-back: unify matapp source with the deployed hosting copy (MC 1355.3)
 
 Coder profile, 2026-09-24. Repo: `/srv/workspace/svarkor-matapp-audit-2026`
-(fresh clone of github svarkor-ai/Matapp @43d1eca). Deployed copy read from
+(fresh clone of github bryn1/Matapp @43d1eca). Deployed copy read from
 `/srv/workspace/hosting/apps/matapp` (read/copy only — hosting repo untouched).
 NOTE: the clone's default branch is `main` (not `master`); the commit landed there.
 

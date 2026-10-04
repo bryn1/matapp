@@ -1,6 +1,6 @@
-# [seat:teddy] [type:code] matapp: populera svarkor-ai/Matapp — framtidsversion + fixar + tests
+# [seat:teddy] [type:code] matapp: populera bryn1/Matapp — framtidsversion + fixar + tests
 
-Ägaren har skapat ett NYTT, TOMT publikt repo: https://github.com/svarkor-ai/Matapp
+Ägaren har skapat ett NYTT, TOMT publikt repo: https://github.com/bryn1/Matapp
 (default branch main, skapat 2026-09-16, 0 refs). Uppgiften är att ge det sitt första
 innehåll: matapp framtidsversionen MED fixrunda-2-fixarna och testsviten.
 
@@ -27,13 +27,13 @@ motor src/ + tests/ med 9 gröna tester).
 4. Lägg till .gitignore (__pycache__, .data/, *.pyc, .pytest_cache, .venv).
 5. Initiera nytt git-repo i arbetsdirt, branch main, commit (coherent: källkod+tests i
    en commit, README+gitignore i en annan eller samma — håll det rent), lägg till remote
-   git@github.com:svarkor-ai/Matapp.git och pusha main.
+   git@github.com:bryn1/Matapp.git och pusha main.
 6. Verifiera: git ls-remote visar refs/heads/main; färsk pytest i den pushade koden
    (klona tillbaka till /tmp och kör) = 9/9 gröna.
 
 ## DoD / Acceptance
-DoD: `git ls-remote git@github.com:svarkor-ai/Matapp.git` visar refs/heads/main (exit 0,
-utdata i evidence); färsk klon av svarkor-ai/Matapp till /tmp + `pytest tests/` = 9 passed,
+DoD: `git ls-remote git@github.com:bryn1/Matapp.git` visar refs/heads/main (exit 0,
+utdata i evidence); färsk klon av bryn1/Matapp till /tmp + `pytest tests/` = 9 passed,
 VERIFY_EXIT=0 i evidence; README.md finns i repots rot med svensk text; ingen --help/-
 katalog, ingen .data/, ingen __pycache__ i det pushade trädet (git ls-tree-check i
 evidence). Evidence sparad som /srv/workspace/svarkor-matapp/audit/matapp-repo-evidence.md.

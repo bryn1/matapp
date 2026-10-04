@@ -21,7 +21,7 @@ per parent's PATH CHANGE message the T7b deliverable was written to this run dir
 
 | cycle | trigger | action | outcome |
 |---|---|---|---|
-| 1 | initial brief | infra child: pre-publish diff (stores.js judged retired old-frontend — new frontend uses profile.selected_stores; no mirror-only live fixes), rsync assembly (source wins, retired css/menu.js/stores.js/--help removed, tests/.audits/.data excluded), mirror boot sanity on :39417 (health 200 w/ 4-grocer offers, 4 stores, register 200), commit e4b3d03 pushed to svarkor-ai/hosting (rollback 265b7cbd), 300 s pull wait, live verify: health offers signal, 4 stores incl lidl, register 200, menu non-empty used_offer_ids | # VERDICT: PASS |
+| 1 | initial brief | infra child: pre-publish diff (stores.js judged retired old-frontend — new frontend uses profile.selected_stores; no mirror-only live fixes), rsync assembly (source wins, retired css/menu.js/stores.js/--help removed, tests/.audits/.data excluded), mirror boot sanity on :39417 (health 200 w/ 4-grocer offers, 4 stores, register 200), commit e4b3d03 pushed to bryn1/hosting (rollback 265b7cbd), 300 s pull wait, live verify: health offers signal, 4 stores incl lidl, register 200, menu non-empty used_offer_ids | # VERDICT: PASS |
 
 # CYCLES — T9 deploy resume (MC 1355.11)
 

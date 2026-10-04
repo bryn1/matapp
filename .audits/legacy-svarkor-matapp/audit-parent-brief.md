@@ -9,7 +9,7 @@ Framtidsvisionen för matapp (Kvällsmats):
 5. Valda butikers reklamblad (willys/ica/coop feeds)
 
 ## Current state (VERIFIED this session)
-- Repo: svarkor-ai/hosting, apps/matapp/ (ingen separat matapp-repo).
+- Repo: bryn1/hosting, apps/matapp/ (ingen separat matapp-repo).
 - LIVE på https://sibbamala.com/matapp/ = POC (revert 12e2e30): butiksväljare + deterministisk
   veckomeny. /health ok, / 200, /api/stores 200, /api/menu 422 utan params, /api/auth/* 404,
   /api/profile 404.

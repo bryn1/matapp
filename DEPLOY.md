@@ -18,7 +18,7 @@ State:     $STATE_DIRECTORY = /var/lib/vm106-app-matapp (systemd StateDirectory)
   from offers-DB rows filtered to the profile's selected stores.
 
 ## Deploy flow
-1. Mirror: /srv/workspace/hosting/apps/matapp (repo svarkor-ai/hosting). Assemble by
+1. Mirror: /srv/workspace/hosting/apps/matapp (repo bryn1/hosting). Assemble by
    rsync from this repo, source wins on every conflict; exclude .git/.audits/.tmp/
    tests/__pycache__/.pytest_cache/LEDGER.md/README.md/.data. Never let the mirror
    carry files or hunks this repo lacks (pre-publish diff is mandatory).

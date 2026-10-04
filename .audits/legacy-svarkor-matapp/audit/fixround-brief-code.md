@@ -1,7 +1,7 @@
 # [seat:teddy] [type:code] matapp fixrunda: F1 + BUG-1/2 + F2/F3 (på 4d220cd-basis)
 
 Du fixar de audit-fynd som blockerar nästa publiceringsförsök av matapp framtidsversion.
-Repo: /srv/workspace/hosting (clone av svarkor-ai/hosting). HEAD = 12e2e30 (revert av
+Repo: /srv/workspace/hosting (clone av bryn1/hosting). HEAD = 12e2e30 (revert av
 framtidsversionen). Framtidsversionens innehåll finns på commit 4d220cd.
 
 ## Bakgrund (audit MC 1188, rapporter i /srv/workspace/svarkor-matapp/audit/)
