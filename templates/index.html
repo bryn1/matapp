@@ -20,6 +20,7 @@
   <a data-page="auth" href="#" class="site-nav__link site-nav__link--active">Konto</a>
   <a data-page="profile" href="#" class="site-nav__link">Profil</a>
   <a data-page="suggestions" href="#" class="site-nav__link">3 förslag</a>
+  <a data-page="shopping" href="#" class="site-nav__link">Handelslista</a>
 </nav>
 
 <main>
@@ -155,12 +156,21 @@
         <button type="button" id="suggestions-retry" class="btn btn-ghost btn-sm">Försök igen</button>
       </div>
 
+      <!-- MC 10349: accept feedback — status line (Vald ✓ / 409 guidance) and
+           an honest banner for accept failures other than 409 -->
+      <p id="suggestions-status" class="form-help" role="status" aria-live="polite" hidden></p>
+      <div id="suggestions-accept-error" class="state-banner state-banner--error" hidden role="alert">
+        <p id="suggestions-accept-error-text"></p>
+      </div>
+
       <!-- Count -->
       <p id="suggestions-count" class="page-view__count" aria-live="polite"></p>
 
       <!-- Three suggestion cards -->
       <div id="suggestions-grid" class="suggestions-grid" role="list" aria-label="Veckomenyförslag">
-        <!-- one card per suggestion rendered by ui/suggestions.js -->
+        <!-- one card per suggestion rendered by ui/suggestions.js
+             (MC 10349: cards carry "Välj detta förslag" / "Vald ✓" and dish
+             buttons opening the recipe dialog) -->
       </div>
 
       <!-- Empty state -->
@@ -170,22 +180,86 @@
     </div>
   </section>
 
+  <!-- ============================== -->
+  <!-- Handelslista view (MC 10349)   -->
+  <!-- ============================== -->
+  <section id="page-shopping" class="page-view" hidden>
+    <div class="shopping-page">
+      <h2 class="page-view__title">Handelslista</h2>
+      <p class="page-view__intro">Veckans inköpslista, grupperad efter kategori. Bocka i en vara när du handlat den.</p>
+
+      <!-- Loading -->
+      <div id="shopping-loading" class="state-banner" role="status">
+        <span class="state-banner__spinner" aria-hidden="true"></span>
+        <p>Hämtar handelslista...</p>
+      </div>
+
+      <!-- Error -->
+      <div id="shopping-error" class="state-banner state-banner--error" hidden role="alert">
+        <p id="shopping-error-text"></p>
+      </div>
+
+      <!-- Status line (build guidance + result) -->
+      <p id="shopping-status" class="form-help" role="status" aria-live="polite" hidden></p>
+
+      <!-- Build from the accepted plan (404 = nothing accepted yet) -->
+      <div class="form-field form-field--actions">
+        <button type="button" id="shopping-build" class="btn btn-primary">Bygg från veckans meny</button>
+      </div>
+
+      <!-- Manual add (item + optional quantity text) -->
+      <form id="shopping-add-form" class="shopping-add" novalidate>
+        <div class="form-field">
+          <label for="shopping-add-item">Ny vara</label>
+          <input type="text" id="shopping-add-item" class="form-input" placeholder="t.ex. mjölk" required>
+        </div>
+        <div class="form-field">
+          <label for="shopping-add-qty">Kvantitet (valfritt)</label>
+          <input type="text" id="shopping-add-qty" class="form-input" placeholder="t.ex. 500 g">
+        </div>
+        <div class="form-field form-field--actions">
+          <button type="submit" class="btn btn-ghost">Lägg till</button>
+        </div>
+      </form>
+
+      <!-- Count + grouped rows (rendered by ui/shopping.js, DOM nodes only) -->
+      <p id="shopping-count" class="page-view__count" aria-live="polite"></p>
+      <div id="shopping-list"></div>
+
+      <!-- Empty state -->
+      <div id="shopping-empty" class="empty-state" hidden role="status">
+        <p class="empty-state__message">Handelslistan är tom. Bygg den från veckans meny eller lägg till varor själv.</p>
+      </div>
+    </div>
+  </section>
+
 </main>
+
+<!-- MC 10349: recipe modal — native <dialog>: Escape closes it natively, the
+     close button + focus return are wired in ui/recipe.js. Content is built
+     with textContent there, never innerHTML. -->
+<dialog id="recipe-dialog" aria-labelledby="recipe-dialog-title">
+  <h2 id="recipe-dialog-title">Recept</h2>
+  <div id="recipe-dialog-body" aria-live="polite"></div>
+  <button type="button" id="recipe-dialog-close" class="btn btn-ghost">Stäng</button>
+</dialog>
 
 <footer class="site-footer">
   <div class="site-footer__inner">
-    <span>matapp — framtidsvision · auth + profil + 3 förslag</span>
+    <span>matapp — framtidsvision · auth + profil + 3 förslag + handelslista</span>
   </div>
   <div class="site-footer__bottom">
     Prototyp 2026
   </div>
 </footer>
 
-<!-- Modular JS: utils → ui modules → app.js LAST -->
-<script src="static/js/utils/api.js?v=20261004"></script>
-<script src="static/js/ui/auth.js?v=20261004"></script>
-<script src="static/js/ui/profile.js?v=20261004"></script>
-<script src="static/js/ui/suggestions.js?v=20261004"></script>
-<script src="static/js/app.js?v=20261004"></script>
+<!-- Modular JS: utils → ui modules → app.js LAST (cache-bust MC 10349) -->
+<script src="static/js/utils/api.js?v=20261008"></script>
+<script src="static/js/ui/auth.js?v=20261008"></script>
+<script src="static/js/ui/profile.js?v=20261008"></script>
+<script src="static/js/ui/recipe.js?v=20261008"></script>
+<script src="static/js/ui/suggestions.js?v=20261008"></script>
+<script src="static/js/ui/shopping.js?v=20261008"></script>
+<script src="static/js/app.js?v=20261008"></script>
 </body>
 </html>

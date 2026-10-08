@@ -81,7 +81,27 @@ async function apiPut(path, body) {
   return res;
 }
 
-// Central registry of API endpoints (Phase 8 frontend surface).
+/**
+ * Perform a DELETE request against the API (shopping-list removal, MC 10349).
+ * Callers URL-encode path segments (encodeURIComponent) — item names carry
+ * spaces and Swedish letters.
+ * @param {string} path - API path (from `Endpoints` + encoded segment)
+ * @returns {Promise<Response>} The fetch Response
+ * @throws {Error} On 4xx/5xx HTTP status
+ */
+async function apiDelete(path) {
+  const res = await fetch(API_BASE + path, { method: 'DELETE' });
+  if (!res.ok) {
+    const err = new Error(`HTTP ${res.status}`);
+    err.response = res;
+    throw err;
+  }
+  return res;
+}
+
+// Central registry of API endpoints (Phase 8 frontend surface; MC 10349 adds
+// the journey endpoints — accept/accepted/recipe/shopping — over APIs that
+// already existed server-side but were never reachable from the UI).
 const Endpoints = {
   login: '/api/auth/login',
   logout: '/api/auth/logout',
@@ -89,4 +109,10 @@ const Endpoints = {
   register: '/api/auth/register',
   profile: '/api/profile',
   menu: '/api/menu',
+  menuAccept: '/api/menu/accept',
+  menuAccepted: '/api/menu/accepted',
+  shopping: '/api/shopping',
+  shoppingToggle: '/api/shopping/toggle',
+  shoppingBuild: '/api/shopping/build',
+  recipe: '/api/recipe/',          // + encodeURIComponent(title)
 };
