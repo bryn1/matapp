@@ -8,8 +8,10 @@ butiksfeeds för extrapriser.
 
 - POC live på sibbamala.com/matapp
 - Denna repo innehåller framtidsversionen: auth (argon2id + session), profil
-  med personer/måltider/budget, 3 veckomenyförslag, fixrunda-2-fixarna
-  (rate-limit/lockout, timing-equalizer, `MATAPP_DB_URL` env-var) och testsvit.
+  med personer/måltider/budget, 3 veckomenyförslag, flödet "Välj detta förslag"
+  → Handelslista (byggd från veckans meny) → receptlasning i dialog
+  (MC 10349), fixrunda-2-fixarna (rate-limit/lockout, timing-equalizer,
+  `MATAPP_DB_URL` env-var) och testsvit.
 - Referenspris-ingest mot butiksfeeds = öppen måldel.
 
 ## Kör lokalt
@@ -29,4 +31,5 @@ python server.py          # PORT/HOST/MATAPP_DB_URL styrs via env
 pytest tests/
 ```
 
-9 tester, gröna i en färsk klon (databaskatalog skapas automatiskt).
+Hela testsviten (150 tester) är grön i en färsk klon (databaskatalog skapas
+automatiskt).

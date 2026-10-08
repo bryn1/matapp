@@ -13,22 +13,35 @@ existing single implementations:
 Auth: every handler resolves the session cookie via the SAME dependency
 ``menu._current_user_or_401`` the menu GET uses — absent/invalid cookie is 401,
 never 200 (gate-C6 line, one gate not two).
+
+MC 10349 (finding 2: the owner's journey was API-only, unreachable in the UI)
+adds the two THIN READS the UI needs, over the same single implementations:
+
+  * ``GET /api/menu/accepted`` — the current week's accepted plan (a filter
+    over ``recipe_usage`` via ``list_usage``; the same 404 answer
+    POST /api/shopping/build gives), so the "Vald ✓" mark survives a reload.
+  * ``GET /api/recipe/{title}`` — one recipe from the ``recipes`` table (via
+    the ``app.models.recipes_db`` shim), 404 when unknown. Registered LAST on
+    the /api/recipe prefix so the literal /rate + /ratings routes keep their
+    own matches (FastAPI matches registrations in order).
 """
 from __future__ import annotations
 
+import json
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app import db
 from app.models.recipe_rating import list_ratings, upsert_rating
-from app.models.recipe_usage import replace_week_usage
+from app.models.recipe_usage import list_usage, replace_week_usage
+from app.models.recipes_db import Recipe
 from app.models.users import User
 from app.optimizer.optimizer import DEFAULT_SEEDS
 from app.routers.menu import (WEEK_PATTERN, _assemble_menu,
                               _current_user_or_401)
-from src.planner.weeks import current_week_key
+from src.planner.weeks import current_week_key, week_to_monday
 
 accept_router = APIRouter(prefix="/api/menu", tags=["menu"])
 recipe_router = APIRouter(prefix="/api/recipe", tags=["recipe"])
@@ -92,6 +105,45 @@ def accept_plan(body: AcceptBody,
     return {"ok": True, "week_key": week_key, "dishes": dishes}
 
 
+def _week_or_422(week: str | None) -> str:
+    """Optional ?week= gate: pattern enforced by FastAPI, REAL-week validity
+    by the shared src.planner.weeks helper — the same 422 boundary as the menu
+    and shopping routers (one gate contract, never a 500)."""
+    week_key = week or current_week_key()
+    try:
+        week_to_monday(week_key)
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail=f"week is not a real ISO week: {week_key!r}") from None
+    return week_key
+
+
+@accept_router.get("/accepted")
+def get_accepted_plan(request: Request,
+                      week: str | None = Query(default=None,
+                                               pattern=WEEK_PATTERN),
+                      user: User = Depends(_current_user_or_401),
+                      session=Depends(db.get_db)) -> dict:
+    """The plan this user ACCEPTED for a week (default: the current one):
+    {week_key, seed, dishes[]} in accept/render order.
+
+    A thin read over the ONE rotation clock — rows are written only by
+    POST /api/menu/accept, this never touches them. 404 with the same detail
+    shape as POST /api/shopping/build's ("no accepted plan for week X"):
+    "nothing accepted yet" is one honest answer, not two mechanisms. The UI
+    calls it on view load so the "Vald ✓" mark survives a reload."""
+    week_key = _week_or_422(week)
+    rows = [row for row in list_usage(session, user.user_id)
+            if row.week_key == week_key]
+    if not rows:
+        raise HTTPException(
+            status_code=404,
+            detail=f"no accepted plan for week {week_key}")
+    return {"week_key": week_key, "seed": rows[0].seed,
+            "dishes": [row.title for row in rows]}
+
+
 class RateBody(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     rating: int = Field(ge=1, le=7)  # matapp's 1..7 household scale
@@ -115,3 +167,46 @@ def get_ratings(request: Request,
     return [{"title": r.title, "rating": r.rating,
              "created_at": r.created_at.isoformat()}
             for r in list_ratings(session, user.user_id)]
+
+
+def _json_list(raw) -> list:
+    """Tolerant JSON-array read of a *_json column (shopping/build precedent:
+    a broken row never 500s a read — it degrades to the honest empty list)."""
+    try:
+        parsed = json.loads(raw or "[]")
+    except ValueError:
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+@recipe_router.get("/{title}")
+def get_recipe(title: str,
+               request: Request,
+               user: User = Depends(_current_user_or_401),
+               session=Depends(db.get_db)) -> dict:
+    """Read one recipe from the ``recipes`` table (via the app.models shim —
+    app code never imports src.recipes.store directly). 404 for an unknown
+    title; the UI shows that state instead of faking a recipe.
+
+    This catch-all path param MUST stay registered after /rate and /ratings:
+    FastAPI matches routes in registration order, and GET /api/recipe/ratings
+    is a literal path, not a title."""
+    row = session.query(Recipe).filter_by(title=title).first()
+    if row is None:
+        raise HTTPException(status_code=404,
+                            detail=f"no recipe for title: {title!r}")
+    ingredients = []
+    for ing in _json_list(row.ingredients_json):
+        if not isinstance(ing, dict):
+            continue
+        name = str(ing.get("name", "")).strip()
+        if not name:
+            continue
+        ingredients.append({"name": name, "qty": ing.get("qty"),
+                            "unit": str(ing.get("unit") or "")})
+    return {"title": row.title, "category": row.category,
+            "servings": row.servings,
+            "vegetarian": bool(row.vegetarian or 0),
+            "kid_friendly": bool(row.kid_friendly or 0),
+            "ingredients": ingredients,
+            "allergens": [str(a) for a in _json_list(row.allergens_json)]}
