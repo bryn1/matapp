@@ -115,21 +115,16 @@ def test_menu_empty_offers_db_degrades_200(client):
 # --------------------------------------------------- 4. selected-store filter
 
 def test_selected_store_filter_restricts_offers(client):
-    """With only 'ica' selected, no willys offer id may appear in any plan."""
-    from app import db as dbm
-    from app.models.store_selection import upsert_selection
-
+    """With only 'ica' selected ON THE USER'S PROFILE (MC 10348: the per-user
+    profile is the single source of truth), no willys offer id may appear."""
     _mkuser_and_login(client, "storeuser", "pw-store-1")
     _seed_offers()
-    from app.config import get_planner_config
-
-    session = dbm._Session()
-    try:
-        # validate against the LIVE planner config (O1) — a stock PlannerConfig()
-        # carries no grocers, so the app's catalog is the validation source
-        upsert_selection(session, ["ica"], get_planner_config())
-    finally:
-        session.close()
+    # validated against the LIVE planner config (O1) through the real API
+    r = client.put("/api/profile", json={
+        "persons": 2, "meal_days": 5, "kron_budget": 800,
+        "selected_stores": ["ica"],
+    })
+    assert r.status_code == 200, r.text
     r = client.get(f"/api/menu?week={WEEK}")
     assert r.status_code == 200, r.text
     used = [oid for s in r.json()["suggestions"] for d in s["days"]

@@ -23,15 +23,22 @@ sqlalchemy, pydantic, argon2-cffi, httpx. No other runtime deps.
   422 on out-of-range. Applies to `postal_code`, `num_children`,
   `prefer_kid_friendly`.
 - `app/routers/menu.py` — `GET /api/menu?week=YYYY-Www` (auth-skyddad). Reads
-  offers from the offers DB, filters by the user's selected stores, builds
+  offers from the offers DB, filters by the user's own `profile.selected_stores`
+  (empty = no filter), builds
   `FamilyPrefs` from the persisted profile, calls `src.planner.menu.plan_menu`
   once per seed (3 suggestions). Response models: `MenuResponse` →
   `Suggestion` → `MenuDay` (additive fields only; `offer_sources`,
   `kid_friendly`).
 - `app/routers/stores.py` — store catalog from the ONE `PlannerConfig`
-  (`app/config.py`).
+  (`app/config.py`). `POST /select` / `GET /selected` are auth-gated and
+  PER-USER (MC 10348): they write/read the caller's own profile row via
+  `profile_service` — never a second table.
 - `app/profile_service.py` — profile CRUD (`ProfileData` value object, one row
-  per user, upsert on save).
+  per user, upsert on save). Also owns the ONE store-selection rule
+  (`validate_selected_stores`: ≤3 / no duplicates / catalog-checked, shared by
+  `PUT /api/profile` and `POST /api/stores/select`) and its ONE write path
+  (`save_selected_stores`) — `profile.selected_stores` is the single source of
+  truth (MC 10348).
 - `app/optimizer/` — `recipes.py` (the hand-curated `ROSTER` the planner
   actually consumes; mirrors the DB `Recipe` fields — two carriers of one
   entity), `optimizer.py` (`FamilyPrefs`, `DEFAULT_SEEDS = (101, 202, 303)`,
@@ -72,7 +79,8 @@ sqlalchemy, pydantic, argon2-cffi, httpx. No other runtime deps.
 
 1. Ingest (boot + ops): fetcher adapters → normalizer → `offers` DB rows
    (week-scoped, store-scoped).
-2. `GET /api/menu`: offers DB → store-selection filter → `plan_menu` over the
+2. `GET /api/menu`: offers DB → per-user store-selection filter
+   (`profile.selected_stores`) → `plan_menu` over the
    optimizer `ROSTER` → 3 seeded `Suggestion`s (+ `offer_sources`).
 3. The planner NEVER reads the recipes DB; the seed/scraper `kid_friendly`
    values are bookkeeping/consistency only (planning reads the roster).
@@ -119,10 +127,15 @@ stores → both steps are no-ops (behaviour = pre-T10b).
 
 One sqlite file (`MATAPP_DB_URL` / `$STATE_DIRECTORY`). Tables on the shared
 `database.Base` declared in the repo-root `database.py` (ORM models in
-`app/models/`): `users`, `profile`, `offers`, `recipes`, `store_selection`
+`app/models/`): `users`, `profile`, `offers`, `recipes`
 (sessions live in-memory in `auth_service.SessionStore`, not a table). Schema
 changes = ORM column + `_NEW_COLUMNS` guarded-ALTER entry
 (existing rows read NULL — every reader treats NULL as 0/absent).
+RETIRED (MC 10348, live-dogfood findings 1/4/5, 2026-10-08): the GLOBAL
+`store_selection` table and its model module — the store choice is per-user
+profile state (`profile.selected_stores`), read and written only through the
+auth-gated paths above. The old table may linger in existing DB files; nothing
+reads or writes it and it is not created on fresh boots.
 
 ## Tests
 

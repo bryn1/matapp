@@ -22,15 +22,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app import auth_service, profile_service, security
-from app.config import get_planner_config
-from app.models.store_selection import valid_store_ids
 from app.models.users import User
 from src.locator import resolve_stores
 
 router = APIRouter(prefix="/api/profile", tags=["profile"])
-
-# Max stores mirrors the profile model / POC store_selection rule (MAX=3).
-_MAX_STORES = profile_service.MAX_SELECTED_STORES
 
 # Swedish postnummer: "41451" or "414 51" (T10b §4); normalized to digits-only.
 POSTAL_CODE_RE = re.compile(r"^\d{3}\s?\d{2}$")
@@ -79,21 +74,14 @@ def get_profile(request: Request,
 @router.put("")
 def put_profile(body: ProfileBody, request: Request,
                 user: User = Depends(_current_user_or_401)) -> dict:
-    if len(body.selected_stores) > _MAX_STORES:
-        raise HTTPException(
-            status_code=422,
-            detail=f"selected_stores may hold at most {_MAX_STORES} stores",
-        )
-    # P1-2 fix (MC 1355.3): validate store ids against the SAME PlannerConfig
-    # catalog the stores router serves (O1 — one catalog, no second list).
-    if len(set(body.selected_stores)) != len(body.selected_stores):
-        raise HTTPException(status_code=422,
-                            detail="selected_stores must not contain duplicates")
-    valid = valid_store_ids(get_planner_config())
-    bad = [sid for sid in body.selected_stores if sid not in valid]
-    if bad:
-        raise HTTPException(status_code=422,
-                            detail=f"unknown store_id(s): {bad}")
+    # MC 10348: the store-selection rule (≤3 / no duplicates / catalog-checked,
+    # P1-2 fix MC 1355.3 + O1) moved to profile_service.validate_selected_stores
+    # — the ONE implementation shared with POST /api/stores/select; ValueError
+    # carries the 422 detail text verbatim.
+    try:
+        profile_service.validate_selected_stores(body.selected_stores)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
 
     # MC 1355.16 (T10b §4): postal_code semantics — absent = unchanged,
     # explicit null/"" = clear (and clear resolved_stores), value = resolve now.

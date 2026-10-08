@@ -11,7 +11,9 @@ that is the shared ``database.Base`` (``print(users.Base, profile.Base)``).
 from . import users      # noqa: F401  (registers users table on Base)
 from . import profile    # noqa: F401  (registers profile table on Base)
 from . import offers_db  # noqa: F401  (registers offers table on Base)
-from . import store_selection  # noqa: F401  (registers store_selection table, MC 1355.3)
+# MC 10348: the global store_selection model is RETIRED — the store choice
+# lives on the per-user profile row (profile.selected_stores); the old table
+# may linger in existing DBs but nothing reads or writes it (docs/ARCHITECTURE.md).
 
 # MC 1355.18 (T11 DA c2 P0): the recipes ORM model must be registered on the
 # shared Base BEFORE boot()/create_all — nothing else in the app path imports
