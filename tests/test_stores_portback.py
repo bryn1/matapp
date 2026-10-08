@@ -51,6 +51,8 @@ def test_get_stores_returns_planner_catalog(client):
 
 
 def test_select_known_stores_persists(client):
+    """MC 10348: selection is AUTH-GATED and PER-USER (profile.selected_stores)."""
+    _mkuser_and_login(client, "sel1", "pw-sel-1")
     r = client.post("/api/stores/select", json={"store_ids": ["ica", "coop"]})
     assert r.status_code == 200, r.text
     assert r.json() == {"selected": ["ica", "coop"]}
@@ -60,12 +62,14 @@ def test_select_known_stores_persists(client):
 
 
 def test_select_unknown_store_422(client):
+    _mkuser_and_login(client, "sel2", "pw-sel-2")
     r = client.post("/api/stores/select", json={"store_ids": ["butiken-x"]})
     assert r.status_code == 422
     assert "unknown store_id" in r.json()["detail"]
 
 
 def test_select_more_than_three_stores_422(client):
+    _mkuser_and_login(client, "sel3", "pw-sel-3")
     r = client.post("/api/stores/select",
                     json={"store_ids": ["ica", "willys", "coop", "ica"]})
     assert r.status_code == 422

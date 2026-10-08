@@ -12,6 +12,11 @@ Persisted per-user fields (PHASE0.md §P Phase 5 / profile model):
   * kron_budget    — kronor/week budget (MUST be present — gate C4 "kron-budget")
   * selected_stores— up to MAX_SELECTED_STORES (3) chosen store ids
 
+MC 10348: the profile is also the SINGLE source of truth for the per-user
+store selection — ``validate_selected_stores`` is the ONE validation shared by
+PUT /api/profile and POST /api/stores/select, and ``save_selected_stores`` is
+the ONE write path both store endpoints go through (never a second table).
+
 Single concern: profile CRUD against the ``profile`` table. Auth/session resolution
 lives in app/auth_service; HTTP wire-up is in app/routers/profile.py.
 """
@@ -21,6 +26,7 @@ import json
 
 import app.db as dbm
 import app.models  # noqa: F401  (register tables before queries)
+from app.config import get_planner_config
 from app.models.profile import Profile, MAX_SELECTED_STORES
 from app.models.users import User
 
@@ -72,6 +78,60 @@ class ProfileData:
 def _ensure_db() -> None:
     if dbm._Session is None:
         dbm.boot()
+
+
+# ---------------------------------------------------------------------------
+# Store selection — ONE validation + ONE write path (MC 10348)
+# ---------------------------------------------------------------------------
+
+
+def valid_store_ids() -> set[str]:
+    """The store ids the live PlannerConfig knows (O1 — never a second list)."""
+    return {g.grocer_id for g in get_planner_config().grocers}
+
+
+def validate_selected_stores(store_ids: list[str]) -> list[str]:
+    """THE selected-stores rule, shared by PUT /api/profile and POST /api/stores/select.
+
+    >3, duplicates and unknown ids raise ValueError carrying the exact 422
+    detail text — both routers map it 1:1, so the rule lives in exactly ONE
+    place (MC 10348: replace, not add beside). Unknown ids are checked against
+    the LIVE PlannerConfig catalog (O1 pin)."""
+    if len(store_ids) > MAX_SELECTED_STORES:
+        raise ValueError(
+            f"selected_stores may hold at most {MAX_SELECTED_STORES} stores")
+    if len(set(store_ids)) != len(store_ids):
+        raise ValueError("selected_stores must not contain duplicates")
+    valid = valid_store_ids()
+    bad = [sid for sid in store_ids if sid not in valid]
+    if bad:
+        raise ValueError(f"unknown store_id(s): {bad}")
+    return list(store_ids)
+
+
+def save_selected_stores(user: User, store_ids: list[str]) -> Profile:
+    """Replace ONLY selected_stores on *user*'s profile row (MC 10348: the
+    per-user profile is the single source of truth for the store choice — the
+    one write path is save_profile, never a second table).
+
+    Validates first (ValueError -> the router's 422). Every other profile
+    field rides through unchanged; a user with no profile yet gets the same
+    sane defaults ProfileBody declares (persons=2, meal_days=5, budget 0)."""
+    validated = validate_selected_stores(store_ids)
+    existing = load_profile(user)
+    data = ProfileData(
+        persons=existing.persons if existing else 2,
+        meal_days=existing.meal_days if existing else 5,
+        kron_budget=(existing.kron_budget
+                     if existing and existing.kron_budget is not None else 0),
+        selected_stores=validated,
+        postal_code=existing.postal_code if existing else None,
+        resolved_stores=existing.resolved_stores if existing else None,
+        num_children=existing.num_children if existing else None,
+        prefer_kid_friendly=(existing.prefer_kid_friendly
+                             if existing else None),
+    )
+    return save_profile(user, data)
 
 
 def save_profile(user: User, data: ProfileData) -> Profile:

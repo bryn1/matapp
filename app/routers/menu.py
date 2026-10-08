@@ -3,9 +3,10 @@
 The API-lager's headline endpoint: a logged-in user asks for a week's menu and gets
 THREE candidate plans (suggestions). MC 1355.5 rewires the data source: the offers
 are read from the OFFERS DB (``src/offers_db/store.list_offers_in_week``), filtered
-to the user's selected stores (store_selection), and handed to the motor's real
-planner ``src.planner.menu.plan_menu`` — the hardcoded ``app/optimizer/offers.py``
-fixture list is no longer the menu's data source.
+to the user's own selected stores (MC 10348: ``profile.selected_stores`` — the
+global store_selection table is retired), and handed to the motor's real planner
+``src.planner.menu.plan_menu`` — the hardcoded ``app/optimizer/offers.py`` fixture
+list is no longer the menu's data source.
 
 MC 10037 (PORT-PLAN P1-a0/P1-a): the recipe roster is the DB ``recipes`` table
 when non-empty (ROSTER = empty-table fallback), and accepted dishes are excluded
@@ -45,7 +46,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app import auth_service, db, profile_service, security
 from app.models.recipe_usage import list_usage
-from app.models.store_selection import list_selected
 from app.models.users import User
 from app.models.recipes_db import c_rdb_list_all
 from app.optimizer.optimizer import DEFAULT_SEEDS, FamilyPrefs, andel_extrapris
@@ -151,15 +151,17 @@ def _assemble_menu(session, user: User, week_key: str) -> MenuResponse:
         raise HTTPException(status_code=422,
                             detail=f"week is not a real ISO week: {week_key!r}") from None
 
-    # OFFERS from the DB, filtered to the user's selected stores (empty selection
-    # = no filter yet: the user has not chosen stores, so the whole week is offered).
+    # PROFIL-skyddad: build the family from THIS user's saved profile.
+    profile = profile_service.load_profile(user)
+    # OFFERS from the DB, filtered to the USER'S OWN selected stores (MC 10348:
+    # the single source of truth is profile.selected_stores — the global
+    # store_selection table is retired; empty selection = no filter, same
+    # semantics as before: the user has not chosen stores, week offered whole).
     offers = list_offers_in_week(session, week_key)
-    selected = [s.store_id for s in list_selected(session)]
+    selected = profile.selected_stores if profile is not None else []
     if selected:
         offers = [o for o in offers if o.grocer_id in selected]
 
-    # PROFIL-skyddad: build the family from THIS user's saved profile.
-    profile = profile_service.load_profile(user)
     persons = profile.persons if profile is not None else FamilyPrefs().persons
     meal_days = profile.meal_days if profile is not None else FamilyPrefs().meal_days
     family = FamilyPrefs(meal_days=meal_days, persons=persons,
