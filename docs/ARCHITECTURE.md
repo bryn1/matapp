@@ -25,10 +25,23 @@ sqlalchemy, pydantic, argon2-cffi, httpx. No other runtime deps.
 - `app/routers/menu.py` — `GET /api/menu?week=YYYY-Www` (auth-skyddad). Reads
   offers from the offers DB, filters by the user's own `profile.selected_stores`
   (empty = no filter), builds
-  `FamilyPrefs` from the persisted profile, calls `src.planner.menu.plan_menu`
-  once per seed (3 suggestions). Response models: `MenuResponse` →
+  `FamilyPrefs` from the persisted profile, then runs the shared assembly
+  `_assemble_menu` (MC 10351): rotation filter FIRST (`_apply_rotation`), then
+  `_diverse_plans` — seed 1 plans over the full rotated roster, each later
+  seed RE-CALLS `src.planner.menu.plan_menu` with exclusion-reduced pools
+  (drop all earlier dishes, then only the later ones, down to the unchanged
+  pool; the first pool still filling the week wins), then the shared
+  zero-day **409** guard. Pool choice stays a pure function of
+  roster+offers+seed-order, so accept recomputes byte-identically.
+  Response models: `MenuResponse` →
   `Suggestion` → `MenuDay` (additive fields only; `offer_sources`,
   `kid_friendly`).
+- `app/routers/plans.py` — `POST /api/menu/accept` + the thin reads
+  `GET /api/menu/accepted`, `GET /api/recipe/{title}` + ratings
+  (`accept_router`, `recipe_router`; wired at `app/main.py`); accept
+  recomputes through the ONE `_assemble_menu` (detail under P1-a).
+- `app/routers/shopping.py` — Handelslista routes (`/api/shopping*`,
+  `/api/shopping/build`, `/api/staples`; detail under P1-b/P2).
 - `app/routers/stores.py` — store catalog from the ONE `PlannerConfig`
   (`app/config.py`). `POST /select` / `GET /selected` are auth-gated and
   PER-USER (MC 10348): they write/read the caller's own profile row via
@@ -42,7 +55,10 @@ sqlalchemy, pydantic, argon2-cffi, httpx. No other runtime deps.
 - `app/optimizer/` — `recipes.py` (the hand-curated `ROSTER` the planner
   actually consumes; mirrors the DB `Recipe` fields — two carriers of one
   entity), `optimizer.py` (`FamilyPrefs`, `DEFAULT_SEEDS = (101, 202, 303)`,
-  `andel_extrapris`).
+  `andel_extrapris`), `offers.py` (**DEAD** — the Phase-6 harness fixture
+  offer set; zero importers across `app/` `src/` `tests/` (import-statement
+  grep; the only mention is a docstring note in `menu.py`). No runtime
+  reader; removal is a separate card).
 
 ### Motor — `src/` (vendored, self-contained; never imported by anything outside)
 - `src/fetcher/` + `src/fetcher/adapters/` — offer fetchers. Adapter files:
@@ -59,6 +75,16 @@ sqlalchemy, pydantic, argon2-cffi, httpx. No other runtime deps.
   count → seeded tiebreak → one dish per day, no repeats; pool exhaustion
   truncates the week (never crashes). MC 1355.18: kid-friendly wins TIES when
   `prefer_kid_friendly` is set (boost, not filter).
+- `src/planner/match.py` — the ONE shared offer↔recipe matcher (MC 10350,
+  finding 8): one tokenizer + `SVENSKA_STOPPORD`; production consumers are
+  exactly `src/planner/menu.py` (attribution) and
+  `app/optimizer/optimizer.py` (`andel_extrapris`) — same import direction
+  as the `weeks.py` precedent. RETIRED by it (gone from the code): the
+  planner's private `_recipe_tokens`/`_offer_hits_recipe` (ingredients-only,
+  counted Swedish stopwords as match tokens) and the optimizer's `_words` +
+  inline title/ingredient sets (TITLE+INGREDIENTS) — the two divergent
+  tokenizers that let one response show "0 % extrapris" beside 10 used
+  offers.
 - `src/planner/weeks.py` — ISO week math (`week_to_monday`), the ONE week
   validator.
 - `src/locator/` — postnummer → stores per chain (willys/ica/coop/lidl/geo).
@@ -127,7 +153,10 @@ stores → both steps are no-ops (behaviour = pre-T10b).
 
 One sqlite file (`MATAPP_DB_URL` / `$STATE_DIRECTORY`). Tables on the shared
 `database.Base` declared in the repo-root `database.py` (ORM models in
-`app/models/`): `users`, `profile`, `offers`, `recipes`
+`app/models/`): `users`, `profile`, `offers`, `recipes`, `recipe_usage`,
+`recipe_rating`, `shopping_item`, `shopping_memory`, `staple` — nine tables
+(the shopping trio lives in `app/models/shopping.py`; `offers`/`recipes` are
+re-exported to `app/models/` through the `offers_db`/`recipes_db` shims).
 (sessions live in-memory in `auth_service.SessionStore`, not a table). Schema
 changes = ORM column + `_NEW_COLUMNS` guarded-ALTER entry
 (existing rows read NULL — every reader treats NULL as 0/absent).
