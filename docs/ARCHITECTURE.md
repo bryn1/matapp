@@ -155,14 +155,40 @@ scoped to one of the profile's resolved stores → dedup by (grocer_id,
 normalized name) preferring the store-level row. No postal code / no resolved
 stores → both steps are no-ops (behaviour = pre-T10b).
 
-The explicit store choice rides the same profile (MC 10375): `GET
-/api/stores` serves the catalog (the ONE `PlannerConfig`, the motor's list
-— no second UI-side list) and `static/js/ui/profile.js` renders it as
-checkboxes PRE-CHECKED from `profile.selected_stores` (catalog fetch
-failed → zero boxes + honest caption, never fabricated ones). Submit PUTs
-the REAL checked array — the old hardcoded `selected_stores: []` silently
-cleared every store on each save — so the profile PUT's replace-on-save
-(absent/`[]` clears, §Module map) is the live contract, not incidental.
+The explicit store choice rides the same profile (MC 10375, error paths MC
+10383): `GET /api/stores` serves the catalog (the ONE `PlannerConfig`, the
+motor's list — no second UI-side list) and `static/js/ui/profile.js` renders
+it as checkboxes PRE-CHECKED from `profile.selected_stores`. Submit keys on
+checkbox PRESENCE (`hasStoreBoxes()`): when at least one box exists the PUT
+carries the REAL checked array — the old hardcoded `selected_stores: []`
+silently cleared every store on each save — so the profile PUT's
+replace-on-save (absent/`[]` clears, §Module map) is the live contract, not
+incidental, and unchecking every box is an honest explicit clear. With ZERO
+boxes there is no user intent to read, so the PUT carries `selectedSnapshot`
+(the last server-known selection) and never a DOM-empty `[]`.
+
+Catalog failure, as its two branches are coded: a THROWN `GET /api/stores`
+(any non-2xx or a network failure — `apiGet` throws and attaches
+`err.response`) sets `storesFailed` and the catalog renders as `[]`; a
+SUCCESSFUL-but-empty catalog leaves `storesFailed` false. Either way an empty
+catalog falls back to rebuilding one checkbox per id in `selectedSnapshot`
+(label = the id itself), so a saved selection stays editable and can never be
+dropped by a save; with no saved selection the fieldset renders ZERO boxes —
+never fabricated ones. The failure caption "Butikslistan kunde inte laddas —
+ladda om sidan. Nuvarande val bevaras." shows only when `storesFailed` AND
+zero boxes rendered; a successful empty catalog keeps the normal "Välj …
+(max 3)" help text over those zero boxes. (The rebuild reads whatever
+`selectedSnapshot` already holds: `init()` starts the catalog and the profile
+fetch side by side and the fieldset is inserted once, so when the catalog
+settles first AND is empty, zero boxes render even though a selection is
+saved — the save then sends that snapshot.)
+
+An unreadable profile BLOCKS the save before any write: a `GET /api/profile`
+failure that is not 404 (5xx, network, and 401 included; a 404 genuinely
+means "none yet" — saving then creates one, `[]` included) sets
+`profileUnreadable`, and `submitProfile` returns before collecting the fields
+with the status "Profildata kunde inte läsas — ladda om innan sparande." —
+ZERO PUTs, never a silent PUT of form defaults + `[]` over a real profile.
 `POST /api/stores/select` is the programmatic equivalent through the same
 ONE validation + write path.
 
@@ -232,7 +258,7 @@ table explicitly (see `tests/test_db_recipe_roster.py`).
 - `static/js/ui/suggestions.js` — per-card "Välj detta förslag" → `POST /api/menu/accept` echoing the card's dishes in render order; 200 marks "Vald ✓" + status line, 409 auto-refetches `GET /api/menu` and says "Menyn uppdaterad — välj igen", other statuses an honest error banner. `GET /api/menu/accepted` on load keeps the mark across reloads. `render()` now lifts `#suggestions-loading` (the card-10064.1.3 stuck-loader fix; finding 7).
 - `static/js/ui/shopping.js` — Handelslista: rows grouped by category, checkbox → toggle, add form → POST, "Ta bort" → DELETE (encodeURIComponent), "Bygg från veckans meny" → `POST /api/shopping/build` whose 404 answers "Velj ett förslag under 3 förslag först". DOM nodes + textContent only (item names are user data).
 - `static/js/ui/recipe.js` — one shared dialog for dish buttons (suggestions + plan-sourced shopping rows; build writes INGREDIENT rows, so an unknown one honestly shows "Inget recept hittades"). Escape/close button native, focus returns to the opener via the `close` event.
-- `static/js/ui/profile.js` — profile form incl. the MC 10375 store checkboxes: rendered from the served catalog (`GET /api/stores`), pre-checked from the loaded profile; submit sends the REAL checked array (details under Store-level selection flow).
+- `static/js/ui/profile.js` — profile form incl. the MC 10375 store checkboxes: rendered from the served catalog (`GET /api/stores`), pre-checked from the loaded profile; submit sends the REAL checked array only when the fieldset HAS checkboxes — with zero boxes (failed/empty catalog) it sends the last server-known selection, never `[]` — and an unreadable profile (any `GET /api/profile` failure but 404) BLOCKS the save with an honest status and zero PUTs (details under Store-level selection flow).
 
 ### Deliberately NOT ported (decision record)
 order_agent/auto-ordering (external-account credentials, PoC-grade); matapp scrapers/willys/campaigns/geo tables (Tjek store-scoped ingest supersedes); blob-encrypted `user_data` scheme (relational per-user tables instead); committed admin password, key-in-cookie sessions, shared creds file (port blockers — MATAPP audit §7). Deferred with reasons: pantry, price-watchlist, recipe-catalog scraper.
