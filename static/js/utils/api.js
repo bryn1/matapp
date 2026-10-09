@@ -108,6 +108,7 @@ const Endpoints = {
   me: '/api/auth/me',
   register: '/api/auth/register',
   profile: '/api/profile',
+  stores: '/api/stores',               // chain catalog, anonymous GET (MC 10375)
   menu: '/api/menu',
   menuAccept: '/api/menu/accept',
   menuAccepted: '/api/menu/accepted',
