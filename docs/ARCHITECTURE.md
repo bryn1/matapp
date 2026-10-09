@@ -89,8 +89,11 @@ sqlalchemy, pydantic, argon2-cffi, httpx. No other runtime deps.
   validator.
 - `src/locator/` — postnummer → stores per chain (willys/ica/coop/lidl/geo).
 - `src/recipes/` — recipe-db: `store.py` (ORM + `upsert_recipe`),
-  `seed.py` (`seed_starter`, idempotent, run only from `run_motor.py` — NOT at
-  app boot), `scraper.py` (`file://`/http ingest, drop-not-fail).
+  `seed.py` (`seed_starter`, idempotent upsert on title — called BOTH from
+  `run_motor.py` (ops job) and at app boot: `db.boot()` →
+  `seed_recipes_if_empty()` seeds when the `recipes` table is EMPTY,
+  fail-tolerant, motor failure ⇒ ROSTER fallback and boot never crashes;
+  detail under P1-a0), `scraper.py` (`file://`/http ingest, drop-not-fail).
 - `src/scheduler/periodic.py` — the weekly ingest pass wired at boot.
 
 ### Entrypoints
