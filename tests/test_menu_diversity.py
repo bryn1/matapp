@@ -114,11 +114,10 @@ def test_accept_seed_202_and_303_recompute_equal(client):
 
 def test_meal_days_seven_degrades_gracefully(client):
     """18 dishes cannot fill 3 disjoint 7-day weeks (3×7 > 18): the cascade
-    degrades instead of starving. Guaranteed: every suggestion still plans
-    FULL 7 days (never fewer, never starve) and ADJACENT suggestions differ
-    (the weaker fallback always drops the immediately previous plan's dishes).
-    Documented degradation: seed 303's fallback pool (roster minus suggestion
-    2) may reproduce suggestion 1 exactly — later seeds MAY reuse."""
+    degrades instead of starving. Guaranteed (MC 10376 tightened this): every
+    suggestion still plans FULL 7 days (never fewer, never starve), the pair
+    S1/S2 keeps the strict exclusion, and NO pair is set-identical — the
+    last rung may reuse earlier dishes but never byte-reproduce a card."""
     dbm.boot()
     _login(client, "sevuser")
     _profile(client, meal_days=7)
@@ -131,6 +130,61 @@ def test_meal_days_seven_degrades_gracefully(client):
     s1, s2, s3 = (set(dishes[seed]) for seed in (101, 202, 303))
     assert s1 & s2 == set(), "seed 202 keeps the strict exclusion (11 >= 7)"
     assert s2 != s3, "the weaker fallback must still drop seed 202's dishes"
+    assert s1 != s3, "MC 10376: the last rung never byte-reproduces card 1"
+    assert len(s1 & s3) < 7 and len(s2 & s3) < 7, \
+        "MC 10376: degraded reuse must keep shared < meal_days for every pair"
+
+
+def test_seven_days_after_accept_no_pair_identical(client):
+    """MC 10376 parent repro, degraded shape: meal_days=7, one accept excludes
+    its 7 titles for the FOLLOWING week (roster 11, 21 slots > 11 titles).
+    At base the exclusion ladder's last rung falls back to the UNCHANGED pool
+    and greedy reconstitutes card 1 exactly (S1 vs S3 shared=7). Guaranteed:
+    every seed still fills 7 days, no two cards are set-identical, and every
+    pair shares fewer than meal_days titles."""
+    dbm.boot()
+    _login(client, "degrad7")
+    _profile(client, meal_days=7)
+    _seed_offers()
+    first = _by_seed(client.get(f"/api/menu?week={WEEK}").json())
+    r = client.post("/api/menu/accept",
+                    json={"seed": 101, "week": WEEK, "dishes": first[101]})
+    assert r.status_code == 200, r.text
+    _seed_offers(FOLLOWING_WEEK)
+    dishes = _by_seed(client.get(f"/api/menu?week={FOLLOWING_WEEK}").json())
+    for seed, titles in dishes.items():
+        assert len(titles) == 7, f"seed {seed} must still plan all 7 days"
+    sets = {seed: set(titles) for seed, titles in dishes.items()}
+    for a, b in ((101, 202), (101, 303), (202, 303)):
+        assert sets[a] != sets[b], f"S{a} vs S{b} identical card set"
+        assert len(sets[a] & sets[b]) < 7, \
+            f"S{a} vs S{b} share all 7 titles — degradation must minimise overlap"
+
+
+def test_five_days_week2_after_accept_no_pair_identical(client):
+    """MC 10376 DA's second degraded shape: one accept, then the FOLLOWING
+    week at meal_days=5 (rotation drops the 5 accepted titles from the 18-dish
+    roster; the strict exclusion cannot hold for the third seed). Guaranteed:
+    every seed fills 5 days, no pair is set-identical and shared < meal_days —
+    overlap is minimised, the last rung never falls back to the unchanged
+    pool (at base S1/S3 ride the same pool and S1 vs S3 can collide)."""
+    dbm.boot()
+    _login(client, "degrad5w2")
+    _profile(client, meal_days=5)
+    _seed_offers()
+    first = _by_seed(client.get(f"/api/menu?week={WEEK}").json())
+    r = client.post("/api/menu/accept",
+                    json={"seed": 101, "week": WEEK, "dishes": first[101]})
+    assert r.status_code == 200, r.text
+    _seed_offers(FOLLOWING_WEEK)
+    dishes = _by_seed(client.get(f"/api/menu?week={FOLLOWING_WEEK}").json())
+    for seed, titles in dishes.items():
+        assert len(titles) == 5, f"seed {seed} must plan all 5 days"
+    sets = {seed: set(titles) for seed, titles in dishes.items()}
+    for a, b in ((101, 202), (101, 303), (202, 303)):
+        assert sets[a] != sets[b], f"S{a} vs S{b} identical card set"
+        assert len(sets[a] & sets[b]) < 5, \
+            f"S{a} vs S{b} share all 5 titles — degradation must minimise overlap"
 
 
 def test_rotation_exclusion_precedes_cascade(client):
