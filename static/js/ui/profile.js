@@ -8,6 +8,16 @@
 // old hardcoded `selected_stores: []` silently unpinned every store on each
 // profile save (PUT replaces this field: absent/[] clears — live contract).
 //
+// MC 10383 (P1): that array is now taken from the checkboxes only when the
+// store fieldset actually HAS checkbox inputs — a failed catalog renders the
+// fieldset with zero boxes, and reading [] from zero boxes wipes the server
+// selection while the caption promises the opposite. Zero boxes → save sends
+// the last server-known selection (selectedSnapshot), never a DOM-empty [].
+// A non-404 GET /profile failure marks the form unreadable: saving is then
+// BLOCKED with an honest status, never a silent PUT of defaults + [] over a
+// real profile (the chosen design over re-fetch-on-submit — a second read can
+// fail the same way and would still need this block).
+//
 // Loads the authenticated user's profile (persons, meal_days, kron_budget,
 // selected_stores) via GET /api/profile and renders an edit form; on submit PUTs
 // it back. 404 (no profile yet) renders the same empty form. 401 is handled by
@@ -43,6 +53,10 @@ const profileModule = (() => {
   const MAX_STORES = 3;
   let storesFailed = false;   // GET /api/stores failed → honest caption, no fake boxes
   let selectedSnapshot = [];  // last server-known selection (pre-check + safe save)
+  // MC 10383: GET /profile failed with anything but 404 (a 404 truly means
+  // "no profile yet" — saving then creates one, [] included). Unknown state →
+  // submitProfile blocks; it must not guess the selection away.
+  let profileUnreadable = false;
 
   async function fetchStoreCatalog() {
     let catalog = [];
@@ -123,6 +137,13 @@ const profileModule = (() => {
     return Array.from(
       document.querySelectorAll('#profile-stores input[name="profile-store"]:checked'),
       (box) => box.value);
+  }
+
+  // MC 10383: submit keys on checkbox PRESENCE, not fieldset presence — a
+  // failed catalog inserts the fieldset with zero boxes, and "zero boxes"
+  // means there is nothing to read, not "user unchecked everything".
+  function hasStoreBoxes() {
+    return !!document.querySelector('#profile-stores input[name="profile-store"]');
   }
 
   function precheckStores(selected) {
@@ -228,6 +249,19 @@ const profileModule = (() => {
 
   // ---- Submit: collect + PUT ----
   async function submitProfile() {
+    // MC 10383 path A2: the profile could not be read (non-404) — every field
+    // shown is a default, not the user's data, and the boxes were never
+    // pre-checked. Saving would PUT defaults + [] over a real profile. Block
+    // with an honest status instead (chosen over re-fetch-on-submit, which
+    // would need this same block for its own failure path).
+    if (profileUnreadable) {
+      const blockedEl = document.getElementById('profile-status');
+      if (blockedEl) {
+        blockedEl.textContent = 'Profildata kunde inte läsas — ladda om innan sparande.';
+        blockedEl.hidden = false;
+      }
+      return;
+    }
     const persons = parseInt(document.getElementById('profile-persons')?.value, 10);
     const mealDays = parseInt(document.getElementById('profile-meal-days')?.value, 10);
     const budgetVal = document.getElementById('profile-budget')?.value;
@@ -239,11 +273,11 @@ const profileModule = (() => {
       kron_budget: Number.isNaN(kronBudget) ? 0 : kronBudget,
       // MC 10375 P1-1: the REAL checked array — the old hardcoded [] silently
       // unpinned every store on profile save (PUT replaces this field;
-      // absent/[] clears — the live contract, kept). If the checkbox block
-      // never rendered, fall back to the last server-known selection: saving
-      // the profile must never destroy it.
-      selected_stores: document.getElementById('profile-stores')
-        ? checkedStoreIds() : selectedSnapshot,
+      // absent/[] clears — the live contract, kept). MC 10383: the array is
+      // only trustworthy when at least one checkbox EXISTS; with zero boxes
+      // (failed catalog) there is no user intent to read, so send the last
+      // server-known selection — saving must never destroy it.
+      selected_stores: hasStoreBoxes() ? checkedStoreIds() : selectedSnapshot,
     };
     // Absent = unchanged (backend semantics); only an edit is sent. An edit
     // to empty sends null = explicit clear.
@@ -279,10 +313,15 @@ const profileModule = (() => {
   // ---- Load on enter ----
   async function load() {
     let profile = null;
+    profileUnreadable = false;
     try {
       profile = await fetchProfile();
     } catch (err) {
       // 404 = none saved yet; 401 handled by auth view. Render empty form either way.
+      // MC 10383: anything but 404 (5xx, network, and yes 401) leaves the
+      // server state unknown — the form may show defaults while a real
+      // profile exists. submitProfile blocks the save until a reload.
+      profileUnreadable = !(err && err.response && err.response.status === 404);
       console.error('Failed to load profile (404 ok):', err);
     }
     fillForm(profile);
