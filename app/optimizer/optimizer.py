@@ -29,6 +29,16 @@ import random
 from dataclasses import dataclass, field
 from datetime import timedelta
 
+# MC 10350 (audit finding 8): ONE shared offer matcher. The old local
+# tokenizers (_words + the inline title/ingredient sets) diverged from the
+# planner's and counted Swedish stopwords as match tokens — same import
+# direction as src.planner.weeks below: app may import src, never the reverse.
+from src.planner.match import (
+    offer_hits_ingredient as _offer_hits_ingredient,
+    offer_hits_recipe as _offer_hits_recipe,
+    recipe_ingredient_names,  # re-exported: routers/tests import it from here
+)
+
 # ---------------------------------------------------------------------------
 # Family preferences (same N5 shape as the POC FamilyPrefs + the ratio threshold)
 # ---------------------------------------------------------------------------
@@ -70,19 +80,6 @@ class Plan(dict):
 # ---------------------------------------------------------------------------
 
 
-def recipe_ingredient_names(recipe) -> list[str]:
-    """Lowercased ingredient names for a recipe (from C-RDB ingredients_json)."""
-    try:
-        ings = json.loads(recipe.ingredients_json or "[]")
-    except (ValueError, TypeError):
-        ings = []
-    return [(i.get("name") or "").strip().lower() for i in ings if (i.get("name") or "").strip()]
-
-
-def _words(text: str) -> set:
-    return {w for w in text.lower().split() if w.isalpha()}
-
-
 def is_extraprice(offer) -> bool:
     """True iff this offer has a measurable extrapris discount (Phase 4 flag idiom).
 
@@ -104,11 +101,9 @@ def _offer_extrapris_matches(offer, ingredient_name: str) -> bool:
     An ingredient only counts toward ``andel_extrapris`` when matched by an offer
     that is actually on extrapris (reference price > sale price). A matching offer
     with NO discount is dropped — that is the whole point of the majority rule.
+    The token rule itself is the shared matcher's (MC 10350).
     """
-    if not is_extraprice(offer):
-        return False
-    name = getattr(offer, "name", "") or ""
-    return bool(_words(name) & _words(ingredient_name))
+    return is_extraprice(offer) and _offer_hits_ingredient(offer, ingredient_name)
 
 
 def andel_extrapris(recipe, offers) -> float:
@@ -149,8 +144,7 @@ def _allowed_recipe(recipe, family: FamilyPrefs) -> bool:
 
 def _offer_hit_count(recipe, offers) -> int:
     """Number of in-week offers that hit this recipe (matches title or an ingredient)."""
-    tokens = _words(getattr(recipe, "title", "") or "") | set(recipe_ingredient_names(recipe))
-    return sum(1 for o in offers if _words(getattr(o, "name", "") or "") & tokens)
+    return sum(1 for o in offers if _offer_hits_recipe(o, recipe))
 
 
 # ---------------------------------------------------------------------------
@@ -199,11 +193,7 @@ def _greedy_plan(week_key: str, offers, eligible, family: FamilyPrefs,
             getattr(o, "offer_id", id(o))
             for o in offers
             if getattr(o, "offer_id", id(o)) in remaining_offers
-            and _words(getattr(o, "name", "") or "")
-            and (_words(getattr(o, "name", "") or "") & (
-                _words(getattr(chosen, "title", "") or "")
-                | set(recipe_ingredient_names(chosen))
-            ))
+            and _offer_hits_recipe(o, chosen)
         ]
         for oid in hits:
             remaining_offers.pop(oid, None)
