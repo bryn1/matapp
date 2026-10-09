@@ -32,6 +32,9 @@ logger = logging.getLogger("kvallsmat.planner")
 
 # Display week keys are ISO 8601 week dates, e.g. "2026-W34".
 from .weeks import week_to_monday as _week_to_monday  # MC 1355.5: ONE shared helper
+# MC 10350 (finding 8): ONE shared offer matcher — the optimizer computes
+# andel_extrapris through the same tokenizer, so attribution and ratio agree.
+from .match import offer_hits_recipe as _offer_hits_recipe
 
 
 @dataclass(frozen=True)
@@ -61,33 +64,6 @@ class Plan(dict):
     so the type hint is meaningful while staying a real dict for consumers."""
 
     __slots__ = ()
-
-
-def _recipe_tokens(recipe):
-    """Lowercased significant word-tokens for a recipe: its title plus each
-    ingredient's name (from C-RDB ingredients_json). Used for offer matching."""
-
-    tokens = set()
-    for word in (recipe.title or "").lower().split():
-        tokens.add(word)
-    try:
-        for ing in json.loads(recipe.ingredients_json or "[]"):
-            name = (ing.get("name") or "").strip().lower()
-            if name:
-                tokens.add(name)
-    except (ValueError, TypeError):
-        pass
-    return tokens
-
-
-def _offer_hits_recipe(offer, recipe) -> bool:
-    """Deterministic: does this offer name share a significant word-token with
-    the recipe (its title or one of its ingredients)?"""
-
-    if not offer.name:
-        return False
-    offer_tokens = {w for w in offer.name.lower().split() if w.isalpha()}
-    return bool(offer_tokens & _recipe_tokens(recipe))
 
 
 def _offer_hit_count(recipe, offers) -> int:
