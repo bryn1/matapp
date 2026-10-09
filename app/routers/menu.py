@@ -1,5 +1,9 @@
 """app.routers.menu — auth-/profil-skyddad GET /api/menu (Phase 7 T6, MC 1355.5).
 
+reason: MC 10351 adds the suggestion-diversity cascade to the ONE shared
+assembly (_diverse_plans); splitting it out would fork the accept-recompute
+seam plans.py imports, so the file stays whole past the 400-line target.
+
 The API-lager's headline endpoint: a logged-in user asks for a week's menu and gets
 THREE candidate plans (suggestions). MC 1355.5 rewires the data source: the offers
 are read from the OFFERS DB (``src/offers_db/store.list_offers_in_week``), filtered
@@ -199,8 +203,12 @@ def _assemble_menu(session, user: User, week_key: str) -> MenuResponse:
     recipe_roster = _apply_rotation(session, user.user_id, week_key,
                                     recipe_roster, family.meal_days)
     by_title = {r.title: r for r in recipe_roster}
-    plans = [plan_menu(week_key, offers, recipe_roster, family, seed=seed)
-             for seed in DEFAULT_SEEDS]
+    # MC 10351 (dogfood 10064.7 finding 3): the seeds plan over EXCLUDING
+    # pools (see _diverse_plans) — suggestion 1 is unchanged (the full
+    # rotated roster), suggestions 2/3 drop earlier dishes while the pool
+    # can still fill the week. Pool choice is a pure function of
+    # roster+offers+seed-order, so accept recompute stays byte-identical.
+    plans = _diverse_plans(week_key, offers, recipe_roster, family)
 
     # Pydantic validates + shapes the response (gate C6). ``andel_extrapris`` is
     # kept for response-shape compatibility; the offers DB carries no reference
@@ -306,6 +314,52 @@ def _apply_rotation(session, user_id: int, week_key: str, roster: list,
                 break
             kept.append(candidate)
     return kept
+
+
+# ---------------------------------------------------------------------------
+# Diversity (MC 10351): the three suggestions must actually differ
+# ---------------------------------------------------------------------------
+
+
+def _diverse_plans(week_key: str, offers: list, roster: list,
+                   family) -> list:
+    """One plan per DEFAULT_SEEDS, each over the ROTATED roster minus the
+    dishes of earlier suggestions as far as the pool allows (MC 10351: greedy
+    hit-count ranking left the seeds nothing to vary, so suggestion 1 and 2
+    came out byte-identical on the live week).
+
+    Suggestion k tries the exclusion sets strongest-first: minus ALL earlier
+    dishes, then minus only the LATER ones (dropping the oldest exclusion —
+    the immediately previous suggestion stays excluded, so adjacent cards
+    cannot collide), down to the unchanged pool. The first exclusion set
+    whose plan still fills the week wins: a plan never starves and never has
+    fewer days than the full pool could give (the degradation the rotation
+    relax already guarantees — never silent starvation). Determinism (N7) is
+    untouched: the pool is a pure function of roster+offers+seed-order, no
+    new randomness, so POST /api/menu/accept recomputes byte-identically."""
+    plans: list = []
+    prior_titles: list[set] = []
+    full_days = 0
+    for i, seed in enumerate(DEFAULT_SEEDS):
+        if i == 0:
+            plan = plan_menu(week_key, offers, roster, family, seed=seed)
+            full_days = len(plan["days"])
+        else:
+            plan = None
+            for start in range(len(prior_titles) + 1):
+                excluded: set = set()
+                for titles in prior_titles[start:]:
+                    excluded |= titles
+                pool = roster if not excluded else [
+                    r for r in roster if r.title not in excluded]
+                candidate = plan_menu(week_key, offers, pool, family,
+                                      seed=seed)
+                if len(candidate["days"]) >= full_days:
+                    plan = candidate
+                    break
+        plans.append(plan)
+        prior_titles.append({d["dish_id"] for d in plan["days"]})
+    return plans
 
 
 # ---------------------------------------------------------------------------
