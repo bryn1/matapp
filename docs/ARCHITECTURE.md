@@ -18,20 +18,35 @@ sqlalchemy, pydantic, argon2-cffi, httpx. No other runtime deps.
   `LoginRateLimiter`.
 - `app/routers/auth.py` — `POST /api/auth/register|login|logout`,
   `GET /api/auth/me`. Registration is open (MC 1355.7); register auto-login.
-- `app/routers/profile.py` — `GET/PUT /api/profile`. PUT semantics:
-  **absent field = unchanged, explicit null = clear** (`model_fields_set`),
-  422 on out-of-range. Applies to `postal_code`, `num_children`,
-  `prefer_kid_friendly`.
+- `app/routers/profile.py` — `GET/PUT /api/profile`; 422 on out-of-range.
+  PUT semantics are PER FIELD: `postal_code`, `num_children` and
+  `prefer_kid_friendly` are guarded by `model_fields_set` — **absent =
+  unchanged, explicit null/"" = clear**. `selected_stores` is NOT
+  (MC 10375): `default_factory=list`, no guard — every PUT **REPLACES**
+  the selection, so absent or `[]` **CLEARS** it. The replacement value
+  is validated by the ONE `validate_selected_stores` (≤3 / no duplicates
+  / catalog-checked) before the write.
 - `app/routers/menu.py` — `GET /api/menu?week=YYYY-Www` (auth-skyddad). Reads
   offers from the offers DB, filters by the user's own `profile.selected_stores`
   (empty = no filter), builds
   `FamilyPrefs` from the persisted profile, then runs the shared assembly
   `_assemble_menu` (MC 10351): rotation filter FIRST (`_apply_rotation`), then
-  `_diverse_plans` — seed 1 plans over the full rotated roster, each later
-  seed RE-CALLS `src.planner.menu.plan_menu` with exclusion-reduced pools
-  (drop all earlier dishes, then only the later ones, down to the unchanged
-  pool; the first pool still filling the week wins), then the shared
-  zero-day **409** guard. Pool choice stays a pure function of
+  `_diverse_plans` — seed 1 plans over the full rotated roster; each later
+  seed RE-CALLS `src.planner.menu.plan_menu` down a ladder of exclusion
+  rungs (drop all earlier cards' dishes, then only the later ones' — the
+  deepest rung still excludes the LAST card's titles, so the unchanged
+  pool is NEVER a rung, MC 10376). A rung is skipped unless its exclusion
+  leaves at least `meal_days` DISTINCT titles in the pool, and a candidate
+  is rejected when it fills fewer days than the full week or its dish-set
+  equals ANY earlier card's (no card may byte-reproduce an earlier one).
+  When no exclusion can fill the week, the last rung `_graceful_plan`
+  spreads the unavoidable reuse instead: unseen titles first, then reuse
+  ordered by fewest earlier-card appearances (stable = roster order), a
+  colliding cut swaps its last slot, and total collision degrades to an
+  honest short card. The guarantee is never-identical + full week
+  preserved (`shared < meal_days` between any two cards; the short-card
+  edge is named in code, unreachable on the 18-title roster). Then the
+  shared zero-day **409** guard. Pool choice stays a pure function of
   roster+offers+seed-order, so accept recomputes byte-identically.
   Response models: `MenuResponse` →
   `Suggestion` → `MenuDay` (additive fields only; `offer_sources`,
@@ -140,6 +155,17 @@ scoped to one of the profile's resolved stores → dedup by (grocer_id,
 normalized name) preferring the store-level row. No postal code / no resolved
 stores → both steps are no-ops (behaviour = pre-T10b).
 
+The explicit store choice rides the same profile (MC 10375): `GET
+/api/stores` serves the catalog (the ONE `PlannerConfig`, the motor's list
+— no second UI-side list) and `static/js/ui/profile.js` renders it as
+checkboxes PRE-CHECKED from `profile.selected_stores` (catalog fetch
+failed → zero boxes + honest caption, never fabricated ones). Submit PUTs
+the REAL checked array — the old hardcoded `selected_stores: []` silently
+cleared every store on each save — so the profile PUT's replace-on-save
+(absent/`[]` clears, §Module map) is the live contract, not incidental.
+`POST /api/stores/select` is the programmatic equivalent through the same
+ONE validation + write path.
+
 ## Known limitations (stated, not hidden)
 
 - **ICA store-scoped ingest is a named follow-up** — store-scoped offer rows
@@ -206,6 +232,7 @@ table explicitly (see `tests/test_db_recipe_roster.py`).
 - `static/js/ui/suggestions.js` — per-card "Välj detta förslag" → `POST /api/menu/accept` echoing the card's dishes in render order; 200 marks "Vald ✓" + status line, 409 auto-refetches `GET /api/menu` and says "Menyn uppdaterad — välj igen", other statuses an honest error banner. `GET /api/menu/accepted` on load keeps the mark across reloads. `render()` now lifts `#suggestions-loading` (the card-10064.1.3 stuck-loader fix; finding 7).
 - `static/js/ui/shopping.js` — Handelslista: rows grouped by category, checkbox → toggle, add form → POST, "Ta bort" → DELETE (encodeURIComponent), "Bygg från veckans meny" → `POST /api/shopping/build` whose 404 answers "Velj ett förslag under 3 förslag först". DOM nodes + textContent only (item names are user data).
 - `static/js/ui/recipe.js` — one shared dialog for dish buttons (suggestions + plan-sourced shopping rows; build writes INGREDIENT rows, so an unknown one honestly shows "Inget recept hittades"). Escape/close button native, focus returns to the opener via the `close` event.
+- `static/js/ui/profile.js` — profile form incl. the MC 10375 store checkboxes: rendered from the served catalog (`GET /api/stores`), pre-checked from the loaded profile; submit sends the REAL checked array (details under Store-level selection flow).
 
 ### Deliberately NOT ported (decision record)
 order_agent/auto-ordering (external-account credentials, PoC-grade); matapp scrapers/willys/campaigns/geo tables (Tjek store-scoped ingest supersedes); blob-encrypted `user_data` scheme (relational per-user tables instead); committed admin password, key-in-cookie sessions, shared creds file (port blockers — MATAPP audit §7). Deferred with reasons: pantry, price-watchlist, recipe-catalog scraper.

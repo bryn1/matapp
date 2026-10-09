@@ -21,7 +21,7 @@ pip install -r requirements.txt
 python server.py          # PORT/HOST/MATAPP_DB_URL styrs via env
 ```
 
-- `PORT` (default 8000), `HOST` (default 127.0.0.1)
+- `PORT` (default 8141), `HOST` (default 127.0.0.1)
 - `MATAPP_DB_URL` — SQLAlchemy-URL, default `sqlite:///<repo>/.data/matapp.db`
   (katalogen skapas automatiskt vid behov)
 
@@ -31,5 +31,5 @@ python server.py          # PORT/HOST/MATAPP_DB_URL styrs via env
 pytest tests/
 ```
 
-Hela testsviten (150 tester) är grön i en färsk klon (databaskatalog skapas
+Hela testsviten (167 tester) är grön i en färsk klon (databaskatalog skapas
 automatiskt).
