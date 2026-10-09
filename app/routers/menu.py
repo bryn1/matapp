@@ -41,6 +41,7 @@ service modules; the week math lives in src/planner/weeks.py.
 from __future__ import annotations
 
 import logging
+from collections import Counter
 
 from datetime import date
 
@@ -324,19 +325,14 @@ def _apply_rotation(session, user_id: int, week_key: str, roster: list,
 def _diverse_plans(week_key: str, offers: list, roster: list,
                    family) -> list:
     """One plan per DEFAULT_SEEDS, each over the ROTATED roster minus the
-    dishes of earlier suggestions as far as the pool allows (MC 10351: greedy
-    hit-count ranking left the seeds nothing to vary, so suggestion 1 and 2
-    came out byte-identical on the live week).
-
-    Suggestion k tries the exclusion sets strongest-first: minus ALL earlier
-    dishes, then minus only the LATER ones (dropping the oldest exclusion —
-    the immediately previous suggestion stays excluded, so adjacent cards
-    cannot collide), down to the unchanged pool. The first exclusion set
-    whose plan still fills the week wins: a plan never starves and never has
-    fewer days than the full pool could give (the degradation the rotation
-    relax already guarantees — never silent starvation). Determinism (N7) is
-    untouched: the pool is a pure function of roster+offers+seed-order, no
-    new randomness, so POST /api/menu/accept recomputes byte-identically."""
+    dishes of earlier suggestions as far as the pool allows (MC 10351).
+    MC 10376: sufficiency is measured in DISTINCT TITLES an exclusion set
+    leaves for the week — not the candidate's raw day count — and no rung
+    may byte-reproduce ANY earlier card; when no exclusion can
+    mathematically fill the week, _graceful_plan minimises overlap instead
+    of falling back to the unchanged pool. Determinism (N7) is untouched:
+    the pool is a pure function of roster+offers+seed-order, so
+    POST /api/menu/accept recomputes byte-identically."""
     plans: list = []
     prior_titles: list[set] = []
     full_days = 0
@@ -346,20 +342,44 @@ def _diverse_plans(week_key: str, offers: list, roster: list,
             full_days = len(plan["days"])
         else:
             plan = None
-            for start in range(len(prior_titles) + 1):
-                excluded: set = set()
-                for titles in prior_titles[start:]:
-                    excluded |= titles
-                pool = roster if not excluded else [
-                    r for r in roster if r.title not in excluded]
+            for start in range(len(prior_titles)):
+                excluded = set().union(*prior_titles[start:])
+                pool = [r for r in roster if r.title not in excluded]
+                if len({r.title for r in pool}) < full_days:
+                    continue
                 candidate = plan_menu(week_key, offers, pool, family,
                                       seed=seed)
-                if len(candidate["days"]) >= full_days:
-                    plan = candidate
-                    break
+                if (len(candidate["days"]) < full_days
+                        or {d["dish_id"] for d in candidate["days"]} in prior_titles):
+                    continue
+                plan = candidate
+                break
+            if plan is None:
+                plan = _graceful_plan(week_key, offers, roster, family,
+                                      seed, prior_titles, full_days)
         plans.append(plan)
         prior_titles.append({d["dish_id"] for d in plan["days"]})
     return plans
+
+
+def _graceful_plan(week_key: str, offers: list, roster: list, family,
+                   seed: int, prior_titles: list, full_days: int) -> dict:
+    """MC 10376 last rung: no exclusion can fill the week (7 days on 18
+    titles: 21 slots > 18). Pick titles NO earlier card used first, then
+    reuse spread by fewest earlier-card appearances (stable = roster order);
+    the planner owns dates and offer attribution of the picked pool. A
+    colliding cut swaps its last slot; total collision degrades to an honest
+    short card — shared < meal_days either way."""
+    seen = Counter(t for titles in prior_titles for t in titles)
+    pool = sorted(roster, key=lambda r: (r.title in seen, seen[r.title]))
+    take = pool[:full_days]
+    for extra in pool[full_days:]:
+        if not take or {r.title for r in take} not in prior_titles:
+            break
+        take[-1] = extra
+    if {r.title for r in take} in prior_titles:
+        take = take[:-1]
+    return plan_menu(week_key, offers, take, family, seed=seed)
 
 
 # ---------------------------------------------------------------------------
