@@ -73,18 +73,31 @@ sessions = SessionStore()
 
 
 class LoginRateLimiter:
-    """Thread-safe per-username failed-login counter with lockout (audit 1188 F2).
+    """Thread-safe failed-attempt counter with lockout (audit 1188 F2; matapp S2).
 
     Same scope/idiom as SessionStore: in-memory, module-level, guarded by a
     threading.Lock. After MAX_FAILURES failed logins for a username inside the
     WINDOW seconds, that username is locked out for LOCKOUT seconds — login()
     refuses it (429 at the router) without touching the DB. A successful login
     resets the counter.
+
+    S2 (MC 10467) extends THIS limiter — no second limiter — with a per-client-IP
+    scope keyed under IP_PREFIX (shared across login failures and registration
+    attempts from that address, so cross-username spraying and register bursts
+    trip the same MAX_FAILURES/WINDOW/LOCKOUT gate). Successful logins never
+    reset the IP bucket (one valid account must not unmask a spray).
+
+    The state dicts are BOUNDED (S2): at most MAX_KEYS entries per dict, and
+    entries older than WINDOW (failures) or past LOCKOUT (locks) are evicted on
+    every record. ``now`` stays injectable on all mutating/querying methods —
+    that is the clock seam the tests use.
     """
 
     MAX_FAILURES = 5
     WINDOW = 15 * 60  # failure window: 15 minutes
     LOCKOUT = 15 * 60  # lockout duration: 15 minutes
+    MAX_KEYS = 10_000  # size cap per state dict (S2: no unbounded growth)
+    IP_PREFIX = "ip:"  # namespace: a client IP never collides with a username
 
     def __init__(self) -> None:
         self._failures: dict[str, list[float]] = {}
@@ -112,6 +125,35 @@ class LoginRateLimiter:
             self._failures[username] = recent
             if len(recent) >= self.MAX_FAILURES:
                 self._locked_until[username] = now + self.LOCKOUT
+            self._bound_state(now)
+
+    def _bound_state(self, now: float) -> None:
+        """Evict TTL-stale entries, then oldest-inserted to enforce MAX_KEYS (S2).
+
+        Called with ``self._lock`` held. Under a cap breach the oldest-inserted
+        key is dropped first even if still fresh — bounded memory is the point
+        (the review's unbounded dict was the finding); evicted keys simply start
+        counting again, exactly like a process restart does today.
+        """
+        for key in [k for k, ts in self._failures.items() if not ts
+                    or now - ts[-1] >= self.WINDOW]:
+            del self._failures[key]
+        for key in [k for k, until in self._locked_until.items() if now >= until]:
+            del self._locked_until[key]
+        while len(self._failures) > self.MAX_KEYS:
+            del self._failures[next(iter(self._failures))]  # oldest-inserted first
+        while len(self._locked_until) > self.MAX_KEYS:
+            del self._locked_until[next(iter(self._locked_until))]
+
+    # ---- per-client-IP scope (S2): same gate, namespaced key, no second dict ----
+
+    def is_ip_throttled(self, client_ip: str, now: float | None = None) -> bool:
+        """True iff *client_ip* has hit MAX_FAILURES attempts inside WINDOW."""
+        return self.is_locked(self.IP_PREFIX + client_ip, now)
+
+    def record_ip_attempt(self, client_ip: str, now: float | None = None) -> None:
+        """Count one abusive attempt (login failure / register) from *client_ip*."""
+        self.record_failure(self.IP_PREFIX + client_ip, now)
 
     def record_success(self, username: str) -> None:
         """A successful login clears the username's failure counter."""
@@ -150,18 +192,24 @@ def authenticate(username: str, password: str) -> User | None:
         session.close()
 
 
-def login(username: str, password: str) -> str | None:
+def login(username: str, password: str, client_ip: str | None = None) -> str | None:
     """create an opaque session token for *username* iff creds are valid, else None.
 
     Raises LoginLockedOut when *username* is currently locked out (audit 1188 F2)
-    — the router maps that to 429. A failed attempt is counted; a successful one
-    resets the username's failure counter.
+    or — S2 (MC 10467) — when *client_ip* has sprayed MAX_FAILURES failed logins
+    across usernames inside WINDOW (router maps either to 429). A failed attempt
+    is counted per username AND per client IP; a successful one resets only the
+    username counter, never the IP bucket.
     """
     if login_limiter.is_locked(username):
         raise LoginLockedOut(username)
+    if client_ip is not None and login_limiter.is_ip_throttled(client_ip):
+        raise LoginLockedOut(client_ip)
     user = authenticate(username, password)
     if user is None:
         login_limiter.record_failure(username)
+        if client_ip is not None:
+            login_limiter.record_ip_attempt(client_ip)
         return None
     login_limiter.record_success(username)
     return sessions.create(user.username)
@@ -194,7 +242,33 @@ def logout(token: str | None) -> None:
 # ---------------------------------------------------------------------------
 
 MIN_PASSWORD_LENGTH = 8
+MAX_PASSWORD_LENGTH = 200  # S2: over-long bodies must never reach argon2
 MAX_USERNAME_LENGTH = 64
+
+# S2 (MC 10467): small built-in weak list (casefolded; every entry is long
+# enough to pass MIN_PASSWORD_LENGTH, so it is the ONLY thing rejecting them).
+WEAK_PASSWORDS = frozenset({
+    "password", "passw0rd", "password1", "12345678", "123456789", "1234567890",
+    "qwerty123", "abc12345", "letmein123", "iloveyou", "football", "baseball",
+    "welcome1", "admin123", "monkey123", "dragon123", "sunshine", "princess",
+})
+
+# Character classes for the "single character class" rule (S2). Unicode-aware
+# islower/isupper/isdigit keep Swedish åäö in the letter classes.
+_CHAR_CLASS_TESTS = (
+    lambda c: c.islower(),
+    lambda c: c.isupper(),
+    lambda c: c.isdigit(),
+    lambda c: not c.isalnum(),  # symbol/punctuation/space class
+)
+
+
+def _is_weak_password(password: str) -> bool:
+    """True iff on the built-in weak list or drawn from a single character class."""
+    if password.casefold() in WEAK_PASSWORDS:
+        return True
+    classes = sum(1 for matches in _CHAR_CLASS_TESTS if any(matches(c) for c in password))
+    return classes < 2
 
 
 class UsernameTaken(Exception):
@@ -202,23 +276,37 @@ class UsernameTaken(Exception):
 
 
 class WeakPassword(Exception):
-    """Raised by register() on a too-short password / bad username (-> 422)."""
+    """Raised by register() on a too-short/over-long/weak password or bad
+    username (-> 422)."""
 
 
-def register(username: str, password: str) -> str:
+def register(username: str, password: str,
+             client_ip: str | None = None) -> str:
     """Create a new account and return an opaque session token (auto-login).
 
     Same mechanism as login — the users table, app.security hashing and the
     module SessionStore; no second user mechanism. Raises UsernameTaken when
-    the username exists (router -> 409) and WeakPassword on a too-short
-    password or an empty/over-long username (router -> 422).
+    the username exists (router -> 409) and WeakPassword on a too-short or
+    over-long password, a built-in-weak / single-character-class password, or an
+    empty/over-long username (router -> 422). S2: the password rules all run
+    BEFORE hashing, and every non-throttled attempt from *client_ip* counts
+    against the shared per-IP throttle (raises LoginLockedOut -> 429).
     """
+    if client_ip is not None and login_limiter.is_ip_throttled(client_ip):
+        raise LoginLockedOut(client_ip)
+    if client_ip is not None:
+        login_limiter.record_ip_attempt(client_ip)
     name = (username or "").strip()
     if not name or len(name) > MAX_USERNAME_LENGTH:
         raise WeakPassword("username must be 1-64 characters")
     if not isinstance(password, str) or len(password) < MIN_PASSWORD_LENGTH:
         raise WeakPassword(
             f"password must be at least {MIN_PASSWORD_LENGTH} characters")
+    if len(password) > MAX_PASSWORD_LENGTH:
+        raise WeakPassword(
+            f"password must be at most {MAX_PASSWORD_LENGTH} characters")
+    if _is_weak_password(password):
+        raise WeakPassword("password too common; use multiple character classes")
     if dbm._Session is None:
         dbm.boot()
     session = dbm._Session()
