@@ -7,10 +7,19 @@ singletons (SessionStore / LoginRateLimiter) so tests never share limiter state.
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
 import pytest
+
+# matapp S3 c4 (MC 10468): SessionStore reads MATAPP_SESSION_TTL /
+# MATAPP_SESSION_IDLE ONCE at import, and test modules import app.auth_service
+# at COLLECTION time — before any fixture can run. Conftest import precedes
+# every test module, so scrub exported knobs HERE; a stray export must never
+# bake a wrong expiry policy into the class (false-RED whole suite).
+os.environ.pop("MATAPP_SESSION_TTL", None)
+os.environ.pop("MATAPP_SESSION_IDLE", None)
 
 # Make the app package importable: tests/ sits under apps/matapp/.
 APP_ROOT = Path(__file__).resolve().parents[1]

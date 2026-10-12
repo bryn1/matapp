@@ -35,7 +35,8 @@ def _clean_session_knobs(monkeypatch):
     """MATAPP_SESSION_TTL / MATAPP_SESSION_IDLE are read ONCE at SessionStore
     import — an exported knob value in the runner env would silently shift the
     class values this file's clock arithmetic runs against (false RED, P3).
-    Strip them before every test here; conftest deliberately never scrubs."""
+    conftest.py scrubs them at import top (collection-time safety, round-c4);
+    this per-test delenv is the belt-and-braces for the values themselves."""
     monkeypatch.delenv("MATAPP_SESSION_TTL", raising=False)
     monkeypatch.delenv("MATAPP_SESSION_IDLE", raising=False)
 
