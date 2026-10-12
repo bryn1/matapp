@@ -3,17 +3,22 @@
 The independent review (R4 on d82ad30) found: SessionStore is a plain
 token -> username dict with no TTL, no last-seen and no bound — only logout
 or a process restart ended a session, Set-Cookie carried no Max-Age, and the
-map grew without bound. These four tests pin the fix on the EXISTING store
+map grew without bound. These tests pin the fix on the EXISTING store
 (no second session layer): (a) a token past the absolute 30-day TTL 401s
 EXACTLY like a never-issued token (byte-identical, no oracle), (b) a session
-idle past the 14-day timeout 401s, (c) the login Set-Cookie carries Max-Age
-matching the TTL, (d) the map is size-bounded and expired entries are swept
-on the next login. Clock control uses the seam the S2 limiter tests
-established (injectable now= / module-level time seam) — no sleeping.
+idle past the 14-day timeout 401s — the 401 is forced on a FRESHLY issued
+session so only the idle arm can fire (round-c3: deleting the idle arm left
+every test green before), (c) the login Set-Cookie carries Max-Age matching
+the TTL, (d) the map is size-bounded and expired entries are swept on the
+next login, (e) the shipped TTL/IDLE policy values are what the doc
+advertises. Clock control uses the seam the S2 limiter tests established
+(injectable now= / module-level time seam) — no sleeping.
 """
 from __future__ import annotations
 
 import time
+
+import pytest
 
 LOGIN = "/api/auth/login"
 ME = "/api/auth/me"
@@ -23,6 +28,16 @@ COOKIE = "matapp_session"
 # assertions at base, where sessions never expire and no cap exists):
 TTL = 30 * 24 * 3600        # absolute session lifetime: 30 days
 IDLE_TIMEOUT = 14 * 24 * 3600  # expiry after 14 days without any request
+
+
+@pytest.fixture(autouse=True)
+def _clean_session_knobs(monkeypatch):
+    """MATAPP_SESSION_TTL / MATAPP_SESSION_IDLE are read ONCE at SessionStore
+    import — an exported knob value in the runner env would silently shift the
+    class values this file's clock arithmetic runs against (false RED, P3).
+    Strip them before every test here; conftest deliberately never scrubs."""
+    monkeypatch.delenv("MATAPP_SESSION_TTL", raising=False)
+    monkeypatch.delenv("MATAPP_SESSION_IDLE", raising=False)
 
 
 class _FakeTime:
@@ -88,11 +103,13 @@ def test_session_past_absolute_ttl_401(client, fresh_auth, monkeypatch):
 
 
 def test_session_idle_past_timeout_401(client, fresh_auth, monkeypatch):
-    """(b) The IDLE arm + the last_seen refresh, pinned (round-c2 gate): after
-    a hit mid-window the session must STILL be alive at issue-age ~2x IDLE
-    (last_seen-age < IDLE) — true only if get() slid the idle clock, so
-    deleting the refresh line in get() turns that assertion RED. An idle gap
-    past IDLE_TIMEOUT then 401s and evicts the entry."""
+    """(b) The IDLE arm + last_seen refresh pinned, IDLE ARM ISOLATED (round-c3):
+    after a mid-window hit the session must STILL be alive at issue-age ~2x IDLE
+    (last_seen-age < IDLE) — true only if get() slid the idle clock, so deleting
+    the refresh line in get() turns that assertion RED. Then a SECOND, FRESHLY
+    issued session expires at idle-age IDLE+1 s while its issue-age stays < TTL:
+    that 401 can ONLY come from the idle arm — deleting the idle arm of
+    _expired(), doubling IDLE_TIMEOUT, or keying it to TTL must turn THIS RED."""
     clock = _FakeTime(1_000.0)
     monkeypatch.setattr(fresh_auth, "time", clock)
     _mkuser("idle-user", "Sup3r-Secret-1")
@@ -105,10 +122,26 @@ def test_session_idle_past_timeout_401(client, fresh_auth, monkeypatch):
     r = client.get(ME, cookies={COOKIE: token})
     assert r.status_code == 200, "hit did not slide the idle clock (last_seen stale)"
 
-    clock.t += IDLE_TIMEOUT + 1  # idle that long since the last hit -> expired
+    # A FRESH session issued now must die inside the absolute TTL — the idle
+    # arm alone can do that (its issue-age never reaches TTL here).
+    fresh_token = _login(client, "idle-user", "Sup3r-Secret-1")  # issued ~28 d
+    clock.t += IDLE_TIMEOUT + 1  # fresh: idle-age == issue-age == 14 d + 1 s < TTL
+    r = client.get(ME, cookies={COOKIE: fresh_token})
+    assert r.status_code == 401, "idle arm not enforced inside the absolute TTL"
+    assert fresh_token not in fresh_auth.sessions._sessions
+
+    # The refreshed session is idle-expired by now too (both arms fire for it).
     r = client.get(ME, cookies={COOKIE: token})
     assert r.status_code == 401
     assert token not in fresh_auth.sessions._sessions
+
+
+def test_shipped_expiry_policy_values(fresh_auth):
+    """(e) round-c3 pin: the values the ARCHITECTURE doc advertises are the
+    values SessionStore SHIPS — absolute TTL 30 d, idle 14 d (the cookie
+    Max-Age in (c) reads the first of these)."""
+    assert fresh_auth.SessionStore.TTL == TTL
+    assert fresh_auth.SessionStore.IDLE_TIMEOUT == IDLE_TIMEOUT
 
 
 def test_login_set_cookie_carries_max_age(client, fresh_auth):
