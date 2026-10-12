@@ -64,6 +64,8 @@ def _set_session_cookie(response: Response, token: str) -> None:
     response.set_cookie(
         security.SESSION_COOKIE,
         token,
+        # S3 (MC 10468): the cookie expires with the server-side absolute TTL.
+        max_age=int(auth_service.SessionStore.TTL),
         httponly=security.SESSION_HTTPONLY,
         secure=security.SESSION_SECURE,
         samesite=security.SESSION_SAMESITE,

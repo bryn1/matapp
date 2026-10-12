@@ -3,7 +3,8 @@
 The session-cookie value is UNPREDICTABLE and OPAQUE (``secrets.token_urlsafe``), and
 holds no user data; the token -> username mapping lives server-side in a SessionStore.
 This is the auth-seam PHASE0-map §A2 requires: "server-sidig session (opak cookie) —
-ingen egen krypto, bibliotek". We store only the token and the owning username.
+ingen egen krypto, bibliotek". We store the token, the owning username and the two
+expiry timestamps S3 (MC 10468) added: issued-at and last-seen.
 
 Single concern: session lifecycle + identity resolution against the users table.
 Password hashing stays in app/security.py; HTTP wire-up is in app/routers/auth.py.
@@ -14,6 +15,7 @@ DB is deferred (Phase 5 / api-lager can back this store with a table if required
 """
 from __future__ import annotations
 
+import os
 import secrets
 import threading
 import time
@@ -42,30 +44,80 @@ def current_user_or_401(request: Request) -> User:
 
 
 class SessionStore:
-    """Thread-safe mapping of opaque session token -> username.
+    """Thread-safe mapping of opaque session token -> (username, issued, last_seen).
 
     ``token`` is server-generated with high entropy (unpredictable/opaque) and is
     the ONLY thing stored in the cookie.
+
+    S3 (MC 10468): sessions EXPIRE — a fixed absolute TTL since issue plus an
+    idle timeout since the last request. An expired lookup behaves EXACTLY like
+    an unknown token (``get`` returns None -> the SAME 401, no oracle that can
+    tell "expired" from "never issued"), and the expired entry is evicted on
+    that access. The map is BOUNDED: create() (login/register, i.e. every
+    session issue) runs a cheap expiry sweep and then trims oldest-inserted to
+    MAX_SESSIONS — same bounded-memory idiom as LoginRateLimiter._bound_state,
+    no scheduler, no new dependency. ``now`` stays injectable on all
+    mutating/querying methods — the clock seam the tests use (S2 idiom).
     """
 
+    # Env overrides let an operator (and the runtime-proof harness) shorten
+    # expiry without a code change; the Set-Cookie Max-Age follows TTL.
+    TTL = float(os.environ.get("MATAPP_SESSION_TTL", 30 * 24 * 3600))
+    IDLE_TIMEOUT = float(os.environ.get("MATAPP_SESSION_IDLE", 14 * 24 * 3600))
+    MAX_SESSIONS = 10_000  # size cap (S3: no unbounded growth)
+
     def __init__(self) -> None:
-        self._sessions: dict[str, str] = {}
+        self._sessions: dict[str, tuple[str, float, float]] = {}
         self._lock = threading.Lock()
 
-    def create(self, username: str) -> str:
-        """Issue a new opaque token bound to *username*."""
+    def _expired(self, issued: float, last_seen: float, now: float) -> bool:
+        """True iff past the absolute TTL or idle past IDLE_TIMEOUT."""
+        return now - issued >= self.TTL or now - last_seen >= self.IDLE_TIMEOUT
+
+    def create(self, username: str, now: float | None = None) -> str:
+        """Issue a new opaque token bound to *username*; sweep + bound (S3)."""
+        now = time.monotonic() if now is None else now
         token = secrets.token_urlsafe(32)
         with self._lock:
-            self._sessions[token] = username
+            self._sessions[token] = (username, now, now)
+            self._sweep(now)
         return token
 
-    def get(self, token: str) -> str | None:
+    def get(self, token: str, now: float | None = None) -> str | None:
+        """Return the owning username iff *token* is a live session; else None.
+
+        Expired entries are deleted here and answered exactly like unknown
+        tokens; a live hit refreshes last_seen (the idle clock restarts).
+        """
+        now = time.monotonic() if now is None else now
         with self._lock:
-            return self._sessions.get(token)
+            entry = self._sessions.get(token)
+            if entry is None:
+                return None
+            username, issued, last_seen = entry
+            if self._expired(issued, last_seen, now):
+                del self._sessions[token]
+                return None
+            self._sessions[token] = (username, issued, now)
+            return username
 
     def delete(self, token: str) -> None:
         with self._lock:
             self._sessions.pop(token, None)
+
+    def _sweep(self, now: float) -> None:
+        """Drop expired sessions, then oldest-inserted to enforce MAX_SESSIONS.
+
+        Called with ``self._lock`` held, from create() only — login/register is
+        where new entries arrive, so that is where bounding pays off (S3).
+        Evicted sessions simply must log in again, exactly like a process
+        restart forces today.
+        """
+        for token in [t for t, (_, issued, seen) in self._sessions.items()
+                      if self._expired(issued, seen, now)]:
+            del self._sessions[token]
+        while len(self._sessions) > self.MAX_SESSIONS:
+            del self._sessions[next(iter(self._sessions))]  # oldest-inserted first
 
 
 # Module-level singleton used by the router; tests may substitute a fresh store.
