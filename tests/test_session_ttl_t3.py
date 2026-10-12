@@ -58,16 +58,28 @@ def _login(client, username: str, password: str) -> str:
 
 
 def test_session_past_absolute_ttl_401(client, fresh_auth, monkeypatch):
-    """(a) A token older than the absolute TTL is answered EXACTLY like a token
-    that never existed: same 401 status AND byte-identical body (no expired vs
-    unknown oracle), and the entry is evicted from the map on that access."""
+    """(a) The ABSOLUTE arm, ISOLATED (round-c2 gate): last_seen is kept fresh
+    by authenticated hits inside the idle window, so the final 401 can ONLY
+    come from issue-age > TTL (idle-age < IDLE at that instant) — deleting the
+    absolute arm of _expired() must turn this test RED. The 401 is answered
+    EXACTLY like a never-issued token (byte-identical body, no oracle) and the
+    entry is evicted from the map on that access."""
     clock = _FakeTime(1_000.0)
     monkeypatch.setattr(fresh_auth, "time", clock)
     _mkuser("ttl-user", "Sup3r-Secret-1")
     token = _login(client, "ttl-user", "Sup3r-Secret-1")
     assert client.get(ME, cookies={COOKIE: token}).status_code == 200  # live
 
-    clock.t += TTL + 1  # past the absolute 30-day lifetime
+    # Slide the IDLE clock across the whole 30 d so only the absolute arm can
+    # fire at the end: each hit lands one second shy of the idle timeout.
+    clock.t += IDLE_TIMEOUT - 1  # issued ~14 d, last_seen 1 s old
+    assert client.get(ME, cookies={COOKIE: token}).status_code == 200
+    clock.t += IDLE_TIMEOUT - 1  # issued ~28 d, last_seen 1 s old
+    assert client.get(ME, cookies={COOKIE: token}).status_code == 200
+    clock.t += TTL - 2 * IDLE_TIMEOUT  # issued 2 s shy of TTL, idle ~2 d old
+    assert client.get(ME, cookies={COOKIE: token}).status_code == 200
+
+    clock.t += 3  # issued TTL+1 s: ONLY the absolute arm sees this as expired
     r_expired = client.get(ME, cookies={COOKIE: token})
     r_unknown = client.get(ME, cookies={COOKIE: "never-issued-token"})
     assert r_expired.status_code == 401
@@ -76,9 +88,11 @@ def test_session_past_absolute_ttl_401(client, fresh_auth, monkeypatch):
 
 
 def test_session_idle_past_timeout_401(client, fresh_auth, monkeypatch):
-    """(b) A request inside the idle window refreshes last-seen (200), but once
-    IDLE_TIMEOUT passes without ANY request the session 401s — while still
-    inside the absolute TTL, so this pins the IDLE rule alone, not the TTL."""
+    """(b) The IDLE arm + the last_seen refresh, pinned (round-c2 gate): after
+    a hit mid-window the session must STILL be alive at issue-age ~2x IDLE
+    (last_seen-age < IDLE) — true only if get() slid the idle clock, so
+    deleting the refresh line in get() turns that assertion RED. An idle gap
+    past IDLE_TIMEOUT then 401s and evicts the entry."""
     clock = _FakeTime(1_000.0)
     monkeypatch.setattr(fresh_auth, "time", clock)
     _mkuser("idle-user", "Sup3r-Secret-1")
@@ -87,7 +101,11 @@ def test_session_idle_past_timeout_401(client, fresh_auth, monkeypatch):
     clock.t += IDLE_TIMEOUT - 1  # one second inside the idle window: refreshed
     assert client.get(ME, cookies={COOKIE: token}).status_code == 200
 
-    clock.t += IDLE_TIMEOUT + 1  # idle that long (total ~28 d, still < 30 d TTL)
+    clock.t += IDLE_TIMEOUT - 1  # issued ~28 d (< 30 d TTL), idle only ~1 s old
+    r = client.get(ME, cookies={COOKIE: token})
+    assert r.status_code == 200, "hit did not slide the idle clock (last_seen stale)"
+
+    clock.t += IDLE_TIMEOUT + 1  # idle that long since the last hit -> expired
     r = client.get(ME, cookies={COOKIE: token})
     assert r.status_code == 401
     assert token not in fresh_auth.sessions._sessions

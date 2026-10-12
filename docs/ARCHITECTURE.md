@@ -173,6 +173,22 @@ No password reset, no e-mail verification.
 - The per-IP state is in-memory and per-process (restart resets it) — same scope
   as the pre-existing limiter and `SessionStore`.
 
+**Session expiry (S3, MC 10468)** — enforced INSIDE the existing `SessionStore`
+(no second session layer, no scheduler):
+
+- **Absolute TTL + idle timeout**: every token records issued-at and last-seen;
+  a session dies `TTL` (default 30 d) after issue, or `IDLE_TIMEOUT` (default
+  14 d) without any authenticated request (each hit refreshes last-seen).
+  `get()` enforces both lazily and evicts an expired entry on that lookup.
+- **No oracle**: an expired token is answered exactly like a never-issued one —
+  the same `current_user` → None path, a byte-identical 401.
+- **Bounded map**: `MAX_SESSIONS` (10 000); every issue (login/register) sweeps
+  expired entries and trims oldest-inserted under the cap.
+- **Set-Cookie** carries `Max-Age=<TTL>`; `HttpOnly`/`Secure`/`SameSite=lax`
+  unchanged.
+- `MATAPP_SESSION_TTL` / `MATAPP_SESSION_IDLE` (seconds) are read from env
+  ONCE at import — changing them requires a restart.
+
 ## Offer sources (verified endpoints)
 
 | Chain | Source | Endpoint |
