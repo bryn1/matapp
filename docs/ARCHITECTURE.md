@@ -15,9 +15,17 @@ sqlalchemy, pydantic, argon2-cffi, httpx. No other runtime deps.
   tolerant). New columns ride this mechanism — never a second migration path.
 - `app/security.py`, `app/auth_service.py` — argon2id password hashing, opaque
   session tokens (`matapp_session` HttpOnly cookie), `SessionStore`,
-  `LoginRateLimiter`.
+  `LoginRateLimiter` — the ONE abuse limiter (S2, MC 10467): per-username
+  lockout AND per-client-IP throttle over shared dicts, with IP-scope keys under
+  the reserved `ip:` prefix (unreachable by any username — that prefix is
+  rejected at both auth entry points), bounded by `MAX_KEYS` + TTL eviction,
+  in-memory and per-process.
 - `app/routers/auth.py` — `POST /api/auth/register|login|logout`,
   `GET /api/auth/me`. Registration is open (MC 1355.7); register auto-login.
+  S2: both POSTs resolve the client IP (CF-Connecting-IP → XFF-leftmost → socket
+  peer) and gate it through `LoginRateLimiter`; `LoginBody` caps the password at
+  200 chars at request validation (before argon2); register records an IP
+  attempt only when it reaches the real account-creation path.
 - `app/routers/profile.py` — `GET/PUT /api/profile`; 422 on out-of-range.
   PUT semantics are PER FIELD: `postal_code`, `num_children` and
   `prefer_kid_friendly` are guarded by `model_fields_set` — **absent =
@@ -133,7 +141,37 @@ sqlalchemy, pydantic, argon2-cffi, httpx. No other runtime deps.
 
 Open registration, argon2id hashes, opaque session cookie (`HttpOnly`),
 `current_user` resolves every protected handler → 401 when absent/invalid.
-No password reset, no e-mail verification, no lockout change.
+No password reset, no e-mail verification.
+
+**Abuse controls (S2, MC 10467)** — login and register are gated through the ONE
+`LoginRateLimiter` (`app/auth_service.py`), never a second limiter:
+
+- **Per-username lockout** (audit 1188 F2): `MAX_FAILURES` (5) failed logins
+  inside `WINDOW` (15 min) locks that username for `LOCKOUT` (15 min) → 429;
+  a success resets the username counter.
+- **Per-client-IP throttle** (S2): failed logins and *genuine* register attempts
+  from one address share the same `MAX_FAILURES`/`WINDOW`/`LOCKOUT` gate, keyed
+  in the same dicts under a reserved `ip:` prefix. This closes cross-username
+  spraying (username is not a throttle boundary) and register bursts. A valid
+  login resets only the username counter, **never** the IP bucket.
+- **Reserved `ip:` namespace** (DA P0): usernames beginning `ip:` are rejected at
+  BOTH entry points before any username is recorded (login → the bad-credential
+  401 with the F3 dummy verify; register → the invalid-username 422), so a
+  username can never write an IP-scope bucket.
+- **CGNAT fairness** (DA P1): a register request records an IP attempt only once
+  it reaches the real account-creation/collision path — client-error 422s
+  (short/weak/over-long password, bad username) record nothing, so cheap
+  rejections cannot lock a whole shared-egress address out.
+- **Bounded state**: `MAX_KEYS` (10 000) per dict + TTL eviction on every
+  `record_failure` (the existing injectable-clock seam); oldest-inserted keys are
+  dropped under a cap breach.
+- **Password caps/policy before hashing**: a `field_validator` on `LoginBody`
+  rejects >200-char passwords at request validation (422) so argon2 never sees a
+  huge body on login or register (field-cap, not body-size middleware — a
+  deliberate trade-off); register additionally rejects a built-in weak list and
+  single-character-class passwords.
+- The per-IP state is in-memory and per-process (restart resets it) — same scope
+  as the pre-existing limiter and `SessionStore`.
 
 ## Offer sources (verified endpoints)
 
@@ -194,6 +232,14 @@ ONE validation + write path.
 
 ## Known limitations (stated, not hidden)
 
+- **CF-Connecting-IP trust (S2 per-IP throttle)**: the client IP is taken from
+  `CF-Connecting-IP` because the matapp origin binds to `127.0.0.1` behind
+  Cloudflare and is reachable only through the Cloudflare tunnel units — a
+  remote client cannot spoof that header to the origin. The fallback order is
+  `CF-Connecting-IP` → first hop of `X-Forwarded-For` → socket peer, so a
+  **blank/absent** `CF-Connecting-IP` falls through to XFF-leftmost: the front
+  proxy chain must therefore ALWAYS set `CF-Connecting-IP` for the throttle key
+  to be honest (an attacker-controlled XFF-leftmost would otherwise be the key).
 - **ICA store-scoped ingest is a named follow-up** — store-scoped offer rows
   currently populate for Willys only (`src/scheduler/periodic.py`
   `run_store_scoped_ingest`); ICA is chain-level until that follow-up lands.

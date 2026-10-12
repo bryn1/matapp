@@ -205,6 +205,19 @@ def login(username: str, password: str, client_ip: str | None = None) -> str | N
         raise LoginLockedOut(username)
     if client_ip is not None and login_limiter.is_ip_throttled(client_ip):
         raise LoginLockedOut(client_ip)
+    if username.startswith(login_limiter.IP_PREFIX):
+        # DA P0 (MC 10467 c2): the "ip:" namespace belongs to the IP throttle
+        # keys ALONE. Before this guard a username "ip:1.2.3.4" reached
+        # record_failure() and wrote THAT address's IP bucket, letting anyone
+        # lock honest clients out of login+register for LOCKOUT. Reject it as a
+        # bad credential BEFORE any username is recorded (no enumeration leak:
+        # the F3 dummy verify still runs so timing matches an unknown username),
+        # while still counting the IP attempt so reserved-prefix spam is no
+        # free-argon2 path.
+        security.verify_password(password, security.DUMMY_HASH)
+        if client_ip is not None:
+            login_limiter.record_ip_attempt(client_ip)
+        return None
     user = authenticate(username, password)
     if user is None:
         login_limiter.record_failure(username)
@@ -288,16 +301,20 @@ def register(username: str, password: str,
     module SessionStore; no second user mechanism. Raises UsernameTaken when
     the username exists (router -> 409) and WeakPassword on a too-short or
     over-long password, a built-in-weak / single-character-class password, or an
-    empty/over-long username (router -> 422). S2: the password rules all run
-    BEFORE hashing, and every non-throttled attempt from *client_ip* counts
-    against the shared per-IP throttle (raises LoginLockedOut -> 429).
+    empty/over-long/reserved-namespace username (router -> 422). S2: the password
+    rules all run BEFORE hashing. Per DA P1 (c2) an attempt counts against the
+    shared per-IP throttle only once it reaches the real account-creation/
+    collision path — client-error 422s record nothing, so cheap rejections
+    cannot lock a whole shared-egress (CGNAT) address out (LoginLockedOut -> 429
+    comes from the check at entry).
     """
     if client_ip is not None and login_limiter.is_ip_throttled(client_ip):
         raise LoginLockedOut(client_ip)
-    if client_ip is not None:
-        login_limiter.record_ip_attempt(client_ip)
     name = (username or "").strip()
-    if not name or len(name) > MAX_USERNAME_LENGTH:
+    if (not name or len(name) > MAX_USERNAME_LENGTH
+            or name.startswith(login_limiter.IP_PREFIX)):
+        # DA P0 (MC 10467 c2): "ip:" keys belong to the IP throttle alone — a
+        # username in that namespace must be un-creatable, same 422 shape.
         raise WeakPassword("username must be 1-64 characters")
     if not isinstance(password, str) or len(password) < MIN_PASSWORD_LENGTH:
         raise WeakPassword(
@@ -307,6 +324,8 @@ def register(username: str, password: str,
             f"password must be at most {MAX_PASSWORD_LENGTH} characters")
     if _is_weak_password(password):
         raise WeakPassword("password too common; use multiple character classes")
+    if client_ip is not None:
+        login_limiter.record_ip_attempt(client_ip)
     if dbm._Session is None:
         dbm.boot()
     session = dbm._Session()
