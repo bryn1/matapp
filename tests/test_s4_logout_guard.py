@@ -59,3 +59,25 @@ def test_logout_kills_exactly_the_presenting_token(client, fresh_auth):
     client.cookies.set(security.SESSION_COOKIE, token1)
     assert client.post(LOGOUT).status_code == 200
     assert _me(client, token2).status_code == 200
+
+
+def test_logout_clears_the_browser_cookie(client, fresh_auth):
+    """DA-F6 (gate 202610150832): logout must also tell the BROWSER to drop
+    the cookie. Measured at the c1 gate: replacing _clear_session_cookie
+    (response) with pass left the FULL suite green (228) — nothing read the
+    logout response at all. This guard pins the clearing Set-Cookie: an empty
+    matapp_session value with Max-Age=0 (starlette delete_cookie emits
+    set_cookie(value="", max_age=0, expires=0))."""
+    from app import security
+
+    token = _register(client, "s4-logout-clear")
+    client.cookies.set(security.SESSION_COOKIE, token)
+    r = client.post(LOGOUT)
+    assert r.status_code == 200, r.text
+    clears = [c.lower() for c in r.headers.get_list("set-cookie")
+              if c.startswith("matapp_session=")]
+    assert len(clears) == 1, r.headers.get_list("set-cookie")
+    name, _, value = clears[0].split(";", 1)[0].partition("=")
+    assert name == "matapp_session"
+    assert value.strip('"') == ""  # SimpleCookie quotes the empty value on the wire
+    assert "max-age=0" in clears[0]

@@ -13,14 +13,16 @@ NOTE (Phase 3 scope): sessions are held in-memory for this phase — restarting 
 process drops them. That is acceptable for the C2 harness; persisting sessions to the
 DB is deferred (Phase 5 / api-lager can back this store with a table if required).
 
-FILE HYGIENE (MC 10469): this file crosses the 400-line soft cap by design — the
-+10 lines are the S4 session-knob clamp below, the one app/ change this brief
-allows; splitting the module would touch every consumer for no behavioural gain.
+FILE HYGIENE (MC 10469): this file crosses the 400-line HARD cap by design — the
+S4 session-knob clamp with its c2 bounds + fallback warning (gate DA-F2/F3) is
+the one app/ change the wave allows. The named LoginRateLimiter split is
+DEFERRED to MC 10711 (separate wave); splitting here would touch every consumer.
 """
 from __future__ import annotations
 
-import math
+import logging
 import os
+import re
 import secrets
 import threading
 import time
@@ -48,15 +50,41 @@ def current_user_or_401(request: Request) -> User:
     return user
 
 
+# S4 c2 accept-range for the session knobs (gate DA-F2, 202610150832):
+# MIN 60 s — routers/auth int()'s the TTL into Set-Cookie Max-Age, so any value
+# below 1 shipped a dead-on-arrival cookie (gate-measured TTL=0.4 -> Max-Age=0
+# kills login fully suite-green); sub-minute lifetimes are operationally
+# meaningless anyway. MAX 10 y — beyond that a session never effectively
+# expires (gate-measured TTL=1e308 emitted a 309-digit Max-Age), the posture
+# this clamp exists to forbid.
+SESSION_KNOB_MIN_SECONDS = 60.0
+SESSION_KNOB_MAX_SECONDS = 315_360_000.0
+# Strict digit grammar — float() alone accepts Python underscore literals, so a
+# "1_000" typo would otherwise silently ship as a real (16-minute) policy.
+_KNOB_RE = re.compile(r"(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?")
+
+
 def _env_seconds(name: str, default: float) -> float:
-    """Session-knob clamp (S4 F3-deferred, MC 10469): garbage/0/negative/inf/nan
-    in the env falls back to the shipped default — never a crash-boot, never a
-    silently-zero (instant-expiry) or never-expiring policy."""
-    try:
-        val = float(os.environ[name])
-    except (KeyError, ValueError):
+    """Session-knob clamp (S4 F3-deferred + c2 bounds, MC 10469): unset -> the
+    shipped default silently; set-but-insane (grammar, range, inf via huge
+    exponent) -> the shipped default WITH one warning line on the app logger
+    (existing idiom, see app/db.py) — never a crash-boot, never a zero- or
+    infinite-expiry policy, never a silently-discarded operator override."""
+    raw = os.environ.get(name)
+    if raw is None:
         return default
-    return val if math.isfinite(val) and val > 0 else default
+    val = None
+    if _KNOB_RE.fullmatch(raw):
+        cand = float(raw)  # "1e400" -> inf without raising; bounds reject it
+        if SESSION_KNOB_MIN_SECONDS <= cand <= SESSION_KNOB_MAX_SECONDS:
+            val = cand
+    if val is None:
+        logging.getLogger("kvallsmat.app").warning(
+            "%s=%r is not a session knob in %g..%g seconds; using shipped "
+            "default %g", name, raw, SESSION_KNOB_MIN_SECONDS,
+            SESSION_KNOB_MAX_SECONDS, default)
+        return default
+    return val
 
 
 class SessionStore:

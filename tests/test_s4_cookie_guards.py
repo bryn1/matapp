@@ -16,10 +16,16 @@ PW = "Sup3r-Secret-1"
 
 
 def _raw_cookie(response) -> str:
-    raw = response.headers.get("set-cookie", "")
-    assert raw.lower().startswith("matapp_session="), (
-        f"expected the session cookie first, got: {raw!r}")
-    return raw.lower()
+    """DA-P2 (gate 202610150832): httpx JOINS repeated Set-Cookie headers, so
+    substring-matching the union lets ANY other cookie satisfy an attribute
+    (measured masking plant: session cookie without Secure + a second cookie
+    carrying Secure -> 7/7 green). Select the session cookie's OWN segment and
+    assert per-cookie on that one only."""
+    entries = [c for c in response.headers.get_list("set-cookie")
+               if c.startswith("matapp_session=")]
+    assert len(entries) == 1, (
+        f"expected exactly one matapp_session cookie, got {len(entries)}")
+    return entries[0].lower()
 
 
 def _register(client, username: str):
@@ -77,12 +83,15 @@ def test_register_cookie_is_samesite_lax(client):
 # ------------------------------------------------------------------- Max-Age
 
 def test_session_cookie_max_age_is_ttl(client, fresh_auth):
-    """The ONE named Max-Age guard for both routes (kept single per the brief):
-    Set-Cookie Max-Age equals the server-side absolute session TTL, so the
-    cookie dies no later than the server-side entry it authenticates to.
+    """The named Max-Age guard for BOTH minting routes: Set-Cookie Max-Age
+    equals the server-side absolute session TTL, so the cookie dies no later
+    than the server-side entry it authenticates to.
 
-    F4-pending (owner ruling 30d-persistent vs browser-session cookie): this
-    pins CURRENT shipped behaviour and flips if the owner rules option 1."""
+    F4-pending (owner ruling 30d-persistent vs browser-session cookie): pins
+    CURRENT shipped behaviour. On owner option 1 exactly TWO tests flip — this
+    one AND tests/test_session_ttl_t3.py::test_login_set_cookie_carries_max_age
+    (gate F5: the Max-Age contract is asserted in both files; this one adds the
+    register side)."""
     from app.auth_service import SessionStore
 
     max_age = f"max-age={int(SessionStore.TTL)}"

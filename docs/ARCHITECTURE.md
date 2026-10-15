@@ -142,6 +142,9 @@ sqlalchemy, pydantic, argon2-cffi, httpx. No other runtime deps.
 Open registration, argon2id hashes, opaque session cookie (`HttpOnly`),
 `current_user` resolves every protected handler → 401 when absent/invalid.
 No password reset, no e-mail verification.
+Logout revokes ONLY the presenting token (in-memory store): the same user's other
+sessions — e.g. another device — SURVIVE; there is no revoke-all. Pinned by
+tests/test_s4_logout_guard.py (S4, MC 10469).
 
 **Abuse controls (S2, MC 10467)** — login and register are gated through the ONE
 `LoginRateLimiter` (`app/auth_service.py`), never a second limiter:
@@ -187,7 +190,12 @@ No password reset, no e-mail verification.
 - **Set-Cookie** carries `Max-Age=<TTL>`; `HttpOnly`/`Secure`/`SameSite=lax`
   unchanged.
 - `MATAPP_SESSION_TTL` / `MATAPP_SESSION_IDLE` (seconds) are read from env
-  ONCE at import — changing them requires a restart.
+  ONCE at import — changing them requires a restart. Values pass the S4 (MC 10469)
+  `_env_seconds` validation: only plain numbers inside 60 s .. 10 y are honoured;
+  anything else (garbage/0/negative/inf/nan/out-of-range/underscore-typo) falls
+  back to the shipped default (30 d / 14 d) with one `WARNING` on the
+  `kvallsmat.app` logger — never a crash-boot, never a zero/infinite-expiry
+  policy, never a silently-discarded override.
 
 ## Offer sources (verified endpoints)
 

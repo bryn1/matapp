@@ -154,6 +154,10 @@ def test_login_set_cookie_carries_max_age(client, fresh_auth):
                                  "password": "Sup3r-Secret-1"})
     assert r.status_code == 200
     raw = r.headers.get("set-cookie", "")
+    # F4-pending (MC 10469): owner option 1 (browser-session cookie) flips
+    # THIS Max-Age assert AND the same contract in
+    # tests/test_s4_cookie_guards.py::test_session_cookie_max_age_is_ttl —
+    # exactly two tests flip, measured by the gate's max-age plant.
     assert f"Max-Age={int(TTL)}" in raw
     lowered = raw.lower()
     assert "httponly" in lowered and "secure" in lowered and "samesite=lax" in lowered
