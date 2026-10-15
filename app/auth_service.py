@@ -12,9 +12,14 @@ Password hashing stays in app/security.py; HTTP wire-up is in app/routers/auth.p
 NOTE (Phase 3 scope): sessions are held in-memory for this phase — restarting the
 process drops them. That is acceptable for the C2 harness; persisting sessions to the
 DB is deferred (Phase 5 / api-lager can back this store with a table if required).
+
+FILE HYGIENE (MC 10469): this file crosses the 400-line soft cap by design — the
++10 lines are the S4 session-knob clamp below, the one app/ change this brief
+allows; splitting the module would touch every consumer for no behavioural gain.
 """
 from __future__ import annotations
 
+import math
 import os
 import secrets
 import threading
@@ -43,6 +48,17 @@ def current_user_or_401(request: Request) -> User:
     return user
 
 
+def _env_seconds(name: str, default: float) -> float:
+    """Session-knob clamp (S4 F3-deferred, MC 10469): garbage/0/negative/inf/nan
+    in the env falls back to the shipped default — never a crash-boot, never a
+    silently-zero (instant-expiry) or never-expiring policy."""
+    try:
+        val = float(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+    return val if math.isfinite(val) and val > 0 else default
+
+
 class SessionStore:
     """Thread-safe mapping of opaque session token -> (username, issued, last_seen).
 
@@ -62,8 +78,8 @@ class SessionStore:
 
     # Env overrides let an operator (and the runtime-proof harness) shorten
     # expiry without a code change; the Set-Cookie Max-Age follows TTL.
-    TTL = float(os.environ.get("MATAPP_SESSION_TTL", 30 * 24 * 3600))
-    IDLE_TIMEOUT = float(os.environ.get("MATAPP_SESSION_IDLE", 14 * 24 * 3600))
+    TTL = _env_seconds("MATAPP_SESSION_TTL", 30 * 24 * 3600)
+    IDLE_TIMEOUT = _env_seconds("MATAPP_SESSION_IDLE", 14 * 24 * 3600)
     MAX_SESSIONS = 10_000  # size cap (S3: no unbounded growth)
 
     def __init__(self) -> None:

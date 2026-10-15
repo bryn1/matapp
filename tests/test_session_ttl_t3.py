@@ -169,6 +169,10 @@ def test_session_map_bounded_burst_and_sweep(fresh_auth, monkeypatch):
         store.create(f"u-{i}")
     assert len(store._sessions) <= 50  # base: 200 entries, unbounded -> RED
 
-    monkeypatch.setattr(fresh_auth, "time", _FakeTime(time.monotonic() + TTL + 1))
+    # N2-c3 hardening (MC 10469): time-travel by IDLE+1, NOT TTL+1 — every old
+    # entry is then idle-expired but still INSIDE the absolute TTL, so the sweep
+    # is forced to exercise its IDLE arm. A sweep checking only absolute age
+    # stays GREEN at TTL+1 while idle-expired entries leak (the gap this closes).
+    monkeypatch.setattr(fresh_auth, "time", _FakeTime(time.monotonic() + IDLE_TIMEOUT + 1))
     store.create("post-expiry")  # a login runs the cheap expiry sweep
     assert len(store._sessions) == 1  # only the fresh session survives
