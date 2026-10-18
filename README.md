@@ -12,6 +12,10 @@ butiksfeeds för extrapriser.
   → Handelslista (byggd från veckans meny) → receptlasning i dialog
   (MC 10349), fixrunda-2-fixarna (rate-limit/lockout, timing-equalizer,
   `MATAPP_DB_URL` env-var) och testsvit.
+- Butiksval (MC 10040): `POST /api/stores/select` och `GET /api/stores/selected`
+  är auth-gated (401 anonymous, samma sessionsgate som profil/menu); valet är
+  PER-USER på profilraden (MC 10348 — den globala `store_selection`-tabellen är
+  pensionerad). Beslut: auth-gate + per-user, inset i testsviten.
 - Referenspris-ingest mot butiksfeeds = öppen måldel.
 
 ## Kör lokalt

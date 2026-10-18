@@ -18,6 +18,10 @@ hosting copy, MC 1355.3 T3; origin: hosting/apps/matapp app/routers/stores.py).
 
 Core selection rules live in profile_service (validation shared with
 PUT /api/profile — one implementation); this router only marshals HTTP<->session.
+
+MC 10040 (gate audit P2): the auth gate IS the decision — anonymous calls 401
+on all three rows (sealed in tests/test_stores_portback.py); selection state
+is PER-USER on the profile row.
 """
 from __future__ import annotations
 

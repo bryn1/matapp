@@ -76,6 +76,31 @@ def test_select_more_than_three_stores_422(client):
     assert "at most 3" in r.json()["detail"]
 
 
+# ------------------------------------------------- MC 10040 auth gate (P2 fix)
+
+def test_anonymous_post_select_401(client):
+    """POST /api/stores/select is auth-gated: anonymous -> 401 (MC 10040)."""
+    r = client.post("/api/stores/select", json={"store_ids": ["ica"]})
+    assert r.status_code == 401
+
+
+def test_anonymous_get_selected_401(client):
+    """GET /api/stores/selected is auth-gated: anonymous -> 401 (MC 10040)."""
+    r = client.get("/api/stores/selected")
+    assert r.status_code == 401
+
+
+def test_authenticated_select_roundtrip(client):
+    """Owner-scoped (authenticated) select works: write then read back."""
+    _mkuser_and_login(client, "s4user", "right-pass")
+    w = client.post("/api/stores/select", json={"store_ids": ["willys"]})
+    assert w.status_code == 200, w.text
+    assert w.json() == {"selected": ["willys"]}
+    sel = client.get("/api/stores/selected")
+    assert sel.status_code == 200
+    assert [s["store_id"] for s in sel.json()] == ["willys"]
+
+
 # --------------------------------------------- profile store validation (P1-2)
 
 def test_profile_unknown_store_422(client):
