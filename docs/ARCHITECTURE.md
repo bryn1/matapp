@@ -13,7 +13,8 @@ sqlalchemy, pydantic, argon2-cffi, httpx. No other runtime deps.
 - `app/db.py` — engine/session singleton, `init_db`, and `ensure_columns()`:
   the guarded-ALTER migration list `_NEW_COLUMNS` (idempotent, concurrent-boot
   tolerant). New columns ride this mechanism — never a second migration path.
-- `app/security.py`, `app/auth_service.py` — argon2id password hashing, opaque
+- `app/security.py`, `app/auth_service.py`, `app/auth_limiter.py` (MC 10711) —
+  argon2id password hashing, opaque
   session tokens (`matapp_session` HttpOnly cookie), `SessionStore`,
   `LoginRateLimiter` — the ONE abuse limiter (S2, MC 10467): per-username
   lockout AND per-client-IP throttle over shared dicts, with IP-scope keys under
@@ -147,7 +148,7 @@ sessions — e.g. another device — SURVIVE; there is no revoke-all. Pinned by
 tests/test_s4_logout_guard.py (S4, MC 10469).
 
 **Abuse controls (S2, MC 10467)** — login and register are gated through the ONE
-`LoginRateLimiter` (`app/auth_service.py`), never a second limiter:
+`LoginRateLimiter` (`app/auth_limiter.py`, re-imported by `app/auth_service.py`), never a second limiter:
 
 - **Per-username lockout** (audit 1188 F2): `MAX_FAILURES` (5) failed logins
   inside `WINDOW` (15 min) locks that username for `LOCKOUT` (15 min) → 429;
